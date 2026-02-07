@@ -177,6 +177,8 @@ class Config(BaseSettings):
             return self.providers.zhipu.api_base
         if "vllm" in model:
             return self.providers.vllm.api_base
+        if "deepseek" in model.lower():
+            return self.providers.deepseek.api_base
         return None
     
     class Config:

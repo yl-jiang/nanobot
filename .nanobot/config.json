@@ -1,0 +1,97 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.nanobot/workspace",
+      "model": "deepseek-chat",
+      "maxTokens": 8192,
+      "temperature": 0.7,
+      "maxToolIterations": 20
+    }
+  },
+  "channels": {
+    "whatsapp": {
+      "enabled": false,
+      "bridgeUrl": "ws://localhost:3001",
+      "allowFrom": []
+    },
+    "telegram": {
+      "enabled": false,
+      "token": "",
+      "allowFrom": [],
+      "proxy": null
+    },
+    "discord": {
+      "enabled": false,
+      "token": "",
+      "allowFrom": [],
+      "gatewayUrl": "wss://gateway.discord.gg/?v=10&encoding=json",
+      "intents": 37377
+    },
+    "feishu": {
+      "enabled": false,
+      "appId": "",
+      "appSecret": "",
+      "encryptKey": "",
+      "verificationToken": "",
+      "allowFrom": []
+    }
+  },
+  "providers": {
+    "anthropic": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "openai": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "openrouter": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "deepseek": {
+      "apiKey": "",
+      "apiBase": "https://api.deepseek.com"
+    },
+    "groq": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "zhipu": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "dashscope": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "vllm": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "gemini": {
+      "apiKey": "",
+      "apiBase": null
+    },
+    "moonshot": {
+      "apiKey": "",
+      "apiBase": null
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "apiKey": "",
+        "maxResults": 5
+      }
+    },
+    "exec": {
+      "timeout": 60
+    },
+    "restrictToWorkspace": false
+  }
+}

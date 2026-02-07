@@ -32,14 +32,20 @@ class LiteLLMProvider(LLMProvider):
             (api_base and "openrouter" in api_base)
         )
         
-        # Track if using custom endpoint (vLLM, etc.)
-        self.is_vllm = bool(api_base) and not self.is_openrouter
+        # Detect DeepSeek by api_base or model name (must be before is_vllm check)
+        self.is_deepseek = 'deepseek' in (api_base or "") or 'deepseek' in default_model.lower()
+        
+        # Track if using custom endpoint (vLLM, etc.) - exclude known providers
+        self.is_vllm = bool(api_base) and not self.is_openrouter and not self.is_deepseek
         
         # Configure LiteLLM based on provider
         if api_key:
             if self.is_openrouter:
                 # OpenRouter mode - set key
                 os.environ["OPENROUTER_API_KEY"] = api_key
+            elif self.is_deepseek:
+                # DeepSeek mode - set key (must be before is_vllm check)
+                os.environ["DEEPSEEK_API_KEY"] = api_key
             elif self.is_vllm:
                 # vLLM/custom endpoint - uses OpenAI-compatible API
                 os.environ["HOSTED_VLLM_API_KEY"] = api_key
@@ -120,10 +126,12 @@ class LiteLLMProvider(LLMProvider):
         if "gemini" in model.lower() and not model.startswith("gemini/"):
             model = f"gemini/{model}"
 
+        if 'deepseek' in model.lower() and not model.startswith("deepseek/"):
+            model = f"deepseek/{model}"
 
         # For vLLM, use hosted_vllm/ prefix per LiteLLM docs
         # Convert openai/ prefix to hosted_vllm/ if user specified it
-        if self.is_vllm:
+        if not self.is_deepseek and self.is_vllm:
             model = f"hosted_vllm/{model}"
         
         # kimi-k2.5 only supports temperature=1.0
