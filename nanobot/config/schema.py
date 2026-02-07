@@ -151,21 +151,58 @@ class Config(BaseSettings):
         return None
 
     def get_api_key(self, model: str | None = None) -> str | None:
-        """Get API key for the given model (or default model). Falls back to first available key."""
+        """Get API key for the given model (or default model). Falls back to environment variable."""
+        import os
+        
+        model_lower = (model or self.agents.defaults.model).lower()
+        
+        # Map of keywords to (provider_config, env_var_name)
+        provider_env_map = {
+            "openrouter": (self.providers.openrouter, "OPENROUTER_API_KEY"),
+            "deepseek": (self.providers.deepseek, "DEEPSEEK_API_KEY"),
+            "anthropic": (self.providers.anthropic, "ANTHROPIC_API_KEY"),
+            "claude": (self.providers.anthropic, "ANTHROPIC_API_KEY"),
+            "openai": (self.providers.openai, "OPENAI_API_KEY"),
+            "gpt": (self.providers.openai, "OPENAI_API_KEY"),
+            "gemini": (self.providers.gemini, "GEMINI_API_KEY"),
+            "zhipu": (self.providers.zhipu, "ZHIPU_API_KEY"),
+            "glm": (self.providers.zhipu, "ZHIPU_API_KEY"),
+            "zai": (self.providers.zhipu, "ZHIPU_API_KEY"),
+            "dashscope": (self.providers.dashscope, "DASHSCOPE_API_KEY"),
+            "qwen": (self.providers.dashscope, "DASHSCOPE_API_KEY"),
+            "groq": (self.providers.groq, "GROQ_API_KEY"),
+            "moonshot": (self.providers.moonshot, "MOONSHOT_API_KEY"),
+            "kimi": (self.providers.moonshot, "MOONSHOT_API_KEY"),
+            "vllm": (self.providers.vllm, "HOSTED_VLLM_API_KEY"),
+        }
+        
         # Try matching by model name first
-        matched = self._match_provider(model)
-        if matched:
-            return matched.api_key
-        # Fallback: return first available key
-        for provider in [
-            self.providers.openrouter, self.providers.deepseek,
-            self.providers.anthropic, self.providers.openai,
-            self.providers.gemini, self.providers.zhipu,
-            self.providers.dashscope, self.providers.moonshot,
-            self.providers.vllm, self.providers.groq,
-        ]:
+        for keyword, (provider, env_var) in provider_env_map.items():
+            if keyword in model_lower:
+                # Return from config if available, otherwise from env
+                if provider.api_key:
+                    return provider.api_key
+                return os.environ.get(env_var)
+        
+        # Fallback: return first available key from config or env
+        fallback_order = [
+            (self.providers.openrouter, "OPENROUTER_API_KEY"),
+            (self.providers.deepseek, "DEEPSEEK_API_KEY"),
+            (self.providers.anthropic, "ANTHROPIC_API_KEY"),
+            (self.providers.openai, "OPENAI_API_KEY"),
+            (self.providers.gemini, "GEMINI_API_KEY"),
+            (self.providers.zhipu, "ZHIPU_API_KEY"),
+            (self.providers.dashscope, "DASHSCOPE_API_KEY"),
+            (self.providers.moonshot, "MOONSHOT_API_KEY"),
+            (self.providers.vllm, "HOSTED_VLLM_API_KEY"),
+            (self.providers.groq, "GROQ_API_KEY"),
+        ]
+        for provider, env_var in fallback_order:
             if provider.api_key:
                 return provider.api_key
+            env_key = os.environ.get(env_var)
+            if env_key:
+                return env_key
         return None
     
     def get_api_base(self, model: str | None = None) -> str | None:
