@@ -16,6 +16,7 @@ from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFile
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.send_file import SendFileTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.subagent import SubagentManager
@@ -99,6 +100,10 @@ class AgentLoop:
         message_tool = MessageTool(send_callback=self.bus.publish_outbound)
         self.tools.register(message_tool)
         
+        # Send file tool
+        send_file_tool = SendFileTool(send_callback=self.bus.publish_outbound)
+        self.tools.register(send_file_tool)
+        
         # Spawn tool (for subagents)
         spawn_tool = SpawnTool(manager=self.subagents)
         self.tools.register(spawn_tool)
@@ -166,6 +171,10 @@ class AgentLoop:
         message_tool = self.tools.get("message")
         if isinstance(message_tool, MessageTool):
             message_tool.set_context(msg.channel, msg.chat_id)
+        
+        send_file_tool = self.tools.get("send_file")
+        if isinstance(send_file_tool, SendFileTool):
+            send_file_tool.set_context(msg.channel, msg.chat_id)
         
         spawn_tool = self.tools.get("spawn")
         if isinstance(spawn_tool, SpawnTool):
@@ -274,6 +283,10 @@ class AgentLoop:
         message_tool = self.tools.get("message")
         if isinstance(message_tool, MessageTool):
             message_tool.set_context(origin_channel, origin_chat_id)
+        
+        send_file_tool = self.tools.get("send_file")
+        if isinstance(send_file_tool, SendFileTool):
+            send_file_tool.set_context(origin_channel, origin_chat_id)
         
         spawn_tool = self.tools.get("spawn")
         if isinstance(spawn_tool, SpawnTool):

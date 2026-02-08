@@ -183,7 +183,7 @@ class TelegramChannel(BaseChannel):
             self._app = None
     
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a message through Telegram."""
+        """Send a message through Telegram (text, photos, or documents)."""
         if not self._app:
             logger.warning("Telegram bot not running")
             return
@@ -192,27 +192,71 @@ class TelegramChannel(BaseChannel):
         self._stop_typing(msg.chat_id)
         
         try:
-            # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
-            # Convert markdown to Telegram HTML
-            html_content = _markdown_to_telegram_html(msg.content)
+        except ValueError:
+            logger.error(f"Invalid chat_id: {msg.chat_id}")
+            return
+        
+        # Send media files if present
+        if msg.media:
+            await self._send_media(chat_id, msg.media, msg.content)
+        elif msg.content:
+            await self._send_text(chat_id, msg.content)
+    
+    async def _send_text(self, chat_id: int, content: str) -> None:
+        """Send a text message."""
+        try:
+            html_content = _markdown_to_telegram_html(content)
             await self._app.bot.send_message(
                 chat_id=chat_id,
                 text=html_content,
                 parse_mode="HTML"
             )
-        except ValueError:
-            logger.error(f"Invalid chat_id: {msg.chat_id}")
         except Exception as e:
-            # Fallback to plain text if HTML parsing fails
             logger.warning(f"HTML parse failed, falling back to plain text: {e}")
             try:
-                await self._app.bot.send_message(
-                    chat_id=int(msg.chat_id),
-                    text=msg.content
-                )
+                await self._app.bot.send_message(chat_id=chat_id, text=content)
             except Exception as e2:
                 logger.error(f"Error sending Telegram message: {e2}")
+    
+    async def _send_media(self, chat_id: int, media_paths: list[str], caption: str = "") -> None:
+        """Send media files (images or documents)."""
+        from pathlib import Path
+        
+        for path_str in media_paths:
+            path = Path(path_str)
+            if not path.exists():
+                logger.warning(f"Media file not found: {path}")
+                continue
+            
+            try:
+                # Determine if it's an image or document
+                ext = path.suffix.lower()
+                image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+                
+                # Use first file's caption only
+                file_caption = caption if path_str == media_paths[0] else ""
+                html_caption = _markdown_to_telegram_html(file_caption) if file_caption else None
+                
+                with open(path, "rb") as f:
+                    if ext in image_exts:
+                        await self._app.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=f,
+                            caption=html_caption,
+                            parse_mode="HTML" if html_caption else None
+                        )
+                        logger.info(f"Sent photo: {path.name}")
+                    else:
+                        await self._app.bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            caption=html_caption,
+                            parse_mode="HTML" if html_caption else None
+                        )
+                        logger.info(f"Sent document: {path.name}")
+            except Exception as e:
+                logger.error(f"Failed to send media {path}: {e}")
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
