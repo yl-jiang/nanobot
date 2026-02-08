@@ -3,7 +3,6 @@
 *.pyc
 dist/
 build/
-docs/
 *.egg-info/
 .DS_Store
 *.egg

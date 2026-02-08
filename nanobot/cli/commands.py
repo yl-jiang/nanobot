@@ -311,11 +311,12 @@ def agent(
         default_model=config.agents.defaults.model
     )
     
+    search_api_key = config.get_search_api_key()
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
-        brave_api_key=config.tools.web.search.api_key or None,
+        brave_api_key=search_api_key or None,
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
     )

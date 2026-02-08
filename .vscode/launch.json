@@ -9,7 +9,21 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "justMyCode": false
+            "justMyCode": false,
+            "python": "${workspaceFolder}/.venv/bin/python"
+        },
+        {
+            "name": "Debug Nanobot Agent",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "nanobot.cli.commands",
+            "args": [
+                "agent"
+            ],
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/.venv/bin/python"
         }
     ]
 }

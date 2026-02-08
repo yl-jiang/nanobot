@@ -217,6 +217,12 @@ class Config(BaseSettings):
         if "deepseek" in model.lower():
             return self.providers.deepseek.api_base
         return None
+
+
+    def get_search_api_key(self) -> str | None:
+        """Get search API key."""
+        import os
+        return self.tools.web.search.api_key or os.environ.get("BRAVE_SEARCH_API_KEY")
     
     class Config:
         env_prefix = "NANOBOT_"
