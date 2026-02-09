@@ -241,7 +241,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
 
-    # === Local deployment (matched by config key, NOT by api_base) ==========
+    # === Local deployment (matched by config key, NOT by api_base) =========
 
     # vLLM / any OpenAI-compatible local server.
     # Detected when config key is "vllm" (provider_name="vllm").

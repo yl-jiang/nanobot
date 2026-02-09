@@ -5,7 +5,7 @@
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
 
-.PHONY: help agent gateway onboard status install dev test lint clean
+.PHONY: help agent gateway onboard status sync install dev test lint clean
 
 # Default target
 help:
@@ -18,6 +18,7 @@ help:
 	@echo "  make cron        - List cron jobs"
 	@echo ""
 	@echo "Development:"
+	@echo "  make sync        - Create venv and install dependencies via uv"
 	@echo "  make install     - Install dependencies"
 	@echo "  make dev         - Install in development mode"
 	@echo "  make test        - Run tests"
@@ -49,6 +50,10 @@ cron:
 # ============================================================================
 # Development
 # ============================================================================
+
+sync:
+	uv venv .venv
+	uv sync
 
 install:
 	$(PIP) install -r requirements.txt
