@@ -206,7 +206,9 @@ class AgentLoop:
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
-            
+
+            # logger.debug(f"LLM reasoning: {response.reasoning_content}") 
+
             # Handle tool calls
             if response.has_tool_calls:
                 # Add assistant message with tool calls
@@ -225,7 +227,7 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts,
                     reasoning_content=response.reasoning_content,
                 )
-                
+
                 # Execute tools
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)

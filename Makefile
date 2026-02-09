@@ -25,15 +25,18 @@ help:
 	@echo "  make lint        - Run linter"
 	@echo "  make clean       - Clean build artifacts"
 
+# Extra arguments (e.g., make agent ARGS="--logs")
+ARGS :=
+
 # ============================================================================
 # Core Commands
 # ============================================================================
 
 agent:
-	$(PYTHON) -m nanobot.cli.commands agent
+	$(PYTHON) -m nanobot.cli.commands agent $(ARGS)
 
 gateway:
-	caffeinate -s $(PYTHON) -m nanobot.cli.commands gateway
+	caffeinate -s $(PYTHON) -m nanobot.cli.commands gateway $(ARGS)
 
 onboard:
 	$(PYTHON) -m nanobot.cli.commands onboard

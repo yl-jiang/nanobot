@@ -114,12 +114,35 @@ class TelegramChannel(BaseChannel):
         self._typing_tasks: dict[str, asyncio.Task] = {}  # chat_id -> typing loop task
     
     async def start(self) -> None:
-        """Start the Telegram bot with long polling."""
+        """Start the Telegram bot with long polling and auto-reconnect."""
         if not self.config.token:
             logger.error("Telegram bot token not configured")
             return
         
         self._running = True
+        retry_delay = 1  # Initial retry delay in seconds
+        max_retry_delay = 30  # Max delay between retries
+        
+        while self._running:
+            try:
+                await self._start_polling_session()
+            except Exception as e:
+                if not self._running:
+                    break
+                
+                error_name = type(e).__name__
+                logger.warning(f"Telegram connection error ({error_name}): {e}")
+                logger.info(f"Reconnecting in {retry_delay}s...")
+                
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_retry_delay)  # Exponential backoff
+                
+                # Cleanup before retry
+                await self._cleanup_app()
+    
+    async def _start_polling_session(self) -> None:
+        """Internal: start a single polling session."""
+        from telegram.error import NetworkError
         
         # Build the application
         builder = Application.builder().token(self.config.token)
@@ -157,7 +180,7 @@ class TelegramChannel(BaseChannel):
         except Exception as e:
             logger.warning(f"Failed to register bot commands: {e}")
         
-        # Start polling (this runs until stopped)
+        # Start polling (this runs until stopped or error)
         await self._app.updater.start_polling(
             allowed_updates=["message"],
             drop_pending_updates=True  # Ignore old messages on startup
@@ -166,6 +189,18 @@ class TelegramChannel(BaseChannel):
         # Keep running until stopped
         while self._running:
             await asyncio.sleep(1)
+    
+    async def _cleanup_app(self) -> None:
+        """Cleanup the application before retry."""
+        if self._app:
+            try:
+                if self._app.updater.running:
+                    await self._app.updater.stop()
+                await self._app.stop()
+                await self._app.shutdown()
+            except Exception as e:
+                logger.debug(f"Cleanup error (ignored): {e}")
+            self._app = None
     
     async def stop(self) -> None:
         """Stop the Telegram bot."""
