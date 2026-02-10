@@ -75,7 +75,7 @@ class SendFileTool(Tool):
     ) -> str:
         channel = channel or self._default_channel
         chat_id = chat_id or self._default_chat_id
-        
+
         if not channel or not chat_id:
             return "Error: No target channel/chat specified"
         

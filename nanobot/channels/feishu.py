@@ -17,6 +17,10 @@ from nanobot.config.schema import FeishuConfig
 try:
     import lark_oapi as lark
     from lark_oapi.api.im.v1 import (
+        CreateFileRequest,
+        CreateFileRequestBody,
+        CreateImageRequest,
+        CreateImageRequestBody,
         CreateMessageRequest,
         CreateMessageRequestBody,
         CreateMessageReactionRequest,
@@ -82,12 +86,21 @@ class FeishuChannel(BaseChannel):
             .log_level(lark.LogLevel.INFO) \
             .build()
         
-        # Create event handler (only register message receive, ignore other events)
+        # Create event handler
+        # Register handlers for subscribed events; unhandled events cause SDK errors.
         event_handler = lark.EventDispatcherHandler.builder(
             self.config.encrypt_key or "",
             self.config.verification_token or "",
         ).register_p2_im_message_receive_v1(
             self._on_message_sync
+        ).register_p2_im_message_message_read_v1(
+            self._on_message_read
+        ).register_p2_im_message_reaction_created_v1(
+            self._on_reaction_created
+        ).register_p2_im_message_reaction_deleted_v1(
+            self._on_reaction_deleted
+        ).register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
+            self._on_bot_p2p_chat_entered
         ).build()
         
         # Create WebSocket client for long connection
@@ -181,19 +194,132 @@ class FeishuChannel(BaseChannel):
             "rows": [{f"c{i}": r[i] if i < len(r) else "" for i in range(len(headers))} for r in rows],
         }
 
+    # Regex to match markdown headings
+    _HEADING_RE = re.compile(r"^#{1,4}\s+(.+)$", re.MULTILINE)
+
+    @staticmethod
+    def _convert_headings(text: str) -> str:
+        """Convert markdown headings to bold text for Feishu compatibility."""
+        return FeishuChannel._HEADING_RE.sub(r"**\1**", text)
+
     def _build_card_elements(self, content: str) -> list[dict]:
         """Split content into markdown + table elements for Feishu card."""
         elements, last_end = [], 0
         for m in self._TABLE_RE.finditer(content):
             before = content[last_end:m.start()].strip()
             if before:
-                elements.append({"tag": "markdown", "content": before})
+                elements.append({"tag": "markdown", "content": self._convert_headings(before)})
             elements.append(self._parse_md_table(m.group(1)) or {"tag": "markdown", "content": m.group(1)})
             last_end = m.end()
         remaining = content[last_end:].strip()
         if remaining:
-            elements.append({"tag": "markdown", "content": remaining})
-        return elements or [{"tag": "markdown", "content": content}]
+            elements.append({"tag": "markdown", "content": self._convert_headings(remaining)})
+        return elements or [{"tag": "markdown", "content": self._convert_headings(content)}]
+
+    # File extension to Feishu file_type mapping
+    _FILE_TYPE_MAP = {
+        ".opus": "opus", ".mp4": "mp4", ".pdf": "pdf",
+        ".doc": "doc", ".xls": "xls", ".ppt": "ppt",
+        ".docx": "doc", ".xlsx": "xls", ".pptx": "ppt",
+    }
+    _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+    def _upload_image_sync(self, file_path: str) -> str | None:
+        """Upload an image to Feishu and return the image_key."""
+        try:
+            with open(file_path, "rb") as f:
+                request = CreateImageRequest.builder() \
+                    .request_body(
+                        CreateImageRequestBody.builder()
+                        .image_type("message")
+                        .image(f)
+                        .build()
+                    ).build()
+                response = self._client.im.v1.image.create(request)
+            if not response.success():
+                logger.error(f"Failed to upload image: code={response.code}, msg={response.msg}")
+                return None
+            image_key = response.data.image_key
+            logger.debug(f"Uploaded image {file_path} -> {image_key}")
+            return image_key
+        except Exception as e:
+            logger.error(f"Error uploading image to Feishu: {e}")
+            return None
+
+    def _upload_file_sync(self, file_path: str) -> str | None:
+        """Upload a file to Feishu and return the file_key."""
+        from pathlib import Path
+        path = Path(file_path)
+        ext = path.suffix.lower()
+        file_type = self._FILE_TYPE_MAP.get(ext, "stream")
+        try:
+            with open(file_path, "rb") as f:
+                request = CreateFileRequest.builder() \
+                    .request_body(
+                        CreateFileRequestBody.builder()
+                        .file_type(file_type)
+                        .file_name(path.name)
+                        .file(f)
+                        .build()
+                    ).build()
+                response = self._client.im.v1.file.create(request)
+            if not response.success():
+                logger.error(f"Failed to upload file: code={response.code}, msg={response.msg}")
+                return None
+            file_key = response.data.file_key
+            logger.debug(f"Uploaded file {file_path} -> {file_key}")
+            return file_key
+        except Exception as e:
+            logger.error(f"Error uploading file to Feishu: {e}")
+            return None
+
+    async def _send_media(self, msg: OutboundMessage) -> None:
+        """Upload and send media files through Feishu."""
+        from pathlib import Path
+
+        receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
+        loop = asyncio.get_running_loop()
+
+        for path_str in msg.media:
+            path = Path(path_str)
+            if not path.exists():
+                logger.warning(f"Media file not found: {path}")
+                continue
+
+            ext = path.suffix.lower()
+            try:
+                if ext in self._IMAGE_EXTS:
+                    image_key = await loop.run_in_executor(None, self._upload_image_sync, path_str)
+                    if not image_key:
+                        continue
+                    content = json.dumps({"image_key": image_key})
+                    msg_type = "image"
+                else:
+                    file_key = await loop.run_in_executor(None, self._upload_file_sync, path_str)
+                    if not file_key:
+                        continue
+                    content = json.dumps({"file_key": file_key})
+                    msg_type = "file"
+
+                request = CreateMessageRequest.builder() \
+                    .receive_id_type(receive_id_type) \
+                    .request_body(
+                        CreateMessageRequestBody.builder()
+                        .receive_id(msg.chat_id)
+                        .msg_type(msg_type)
+                        .content(content)
+                        .build()
+                    ).build()
+
+                response = self._client.im.v1.message.create(request)
+                if not response.success():
+                    logger.error(
+                        f"Failed to send Feishu {msg_type}: code={response.code}, msg={response.msg}"
+                    )
+                else:
+                    logger.info(f"Sent {msg_type}: {path.name}")
+            except Exception as e:
+                logger.error(f"Error sending media {path.name}: {e}")
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu."""
@@ -202,44 +328,66 @@ class FeishuChannel(BaseChannel):
             return
         
         try:
-            # Determine receive_id_type based on chat_id format
-            # open_id starts with "ou_", chat_id starts with "oc_"
-            if msg.chat_id.startswith("oc_"):
-                receive_id_type = "chat_id"
-            else:
-                receive_id_type = "open_id"
-            
-            # Build card with markdown + table support
-            elements = self._build_card_elements(msg.content)
-            card = {
-                "config": {"wide_screen_mode": True},
-                "elements": elements,
-            }
-            content = json.dumps(card, ensure_ascii=False)
-            
-            request = CreateMessageRequest.builder() \
-                .receive_id_type(receive_id_type) \
-                .request_body(
-                    CreateMessageRequestBody.builder()
-                    .receive_id(msg.chat_id)
-                    .msg_type("interactive")
-                    .content(content)
-                    .build()
-                ).build()
-            
-            response = self._client.im.v1.message.create(request)
-            
-            if not response.success():
-                logger.error(
-                    f"Failed to send Feishu message: code={response.code}, "
-                    f"msg={response.msg}, log_id={response.get_log_id()}"
-                )
-            else:
-                logger.debug(f"Feishu message sent to {msg.chat_id}")
+            # Send media files if present
+            if msg.media:
+                logger.info(f"Sending message with {len(msg.media)} media files to {msg.chat_id}")
+                await self._send_media(msg)
+
+            # Send text content (as card with markdown/table support)
+            if msg.content:
+                # Determine receive_id_type based on chat_id format
+                if msg.chat_id.startswith("oc_"):
+                    receive_id_type = "chat_id"
+                else:
+                    receive_id_type = "open_id"
+                
+                # Build card with markdown support (headings converted to bold)
+                elements = self._build_card_elements(msg.content)
+                card = {
+                    "config": {"wide_screen_mode": True},
+                    "elements": elements,
+                }
+                content = json.dumps(card, ensure_ascii=False)
+                
+                request = CreateMessageRequest.builder() \
+                    .receive_id_type(receive_id_type) \
+                    .request_body(
+                        CreateMessageRequestBody.builder()
+                        .receive_id(msg.chat_id)
+                        .msg_type("interactive")
+                        .content(content)
+                        .build()
+                    ).build()
+                
+                response = self._client.im.v1.message.create(request)
+                
+                if not response.success():
+                    logger.error(
+                        f"Failed to send Feishu message: code={response.code}, "
+                        f"msg={response.msg}, log_id={response.get_log_id()}"
+                    )
+                else:
+                    logger.debug(f"Feishu message sent to {msg.chat_id}")
                 
         except Exception as e:
             logger.error(f"Error sending Feishu message: {e}")
     
+    def _on_message_read(self, data: Any) -> None:
+        """Handle message read event."""
+        pass
+
+    def _on_reaction_created(self, data: Any) -> None:
+        """Handle reaction added event."""
+        pass
+
+    def _on_reaction_deleted(self, data: Any) -> None:
+        """Handle reaction removed event."""
+        pass
+
+    def _on_bot_p2p_chat_entered(self, data: Any) -> None:
+        """Handle user entering bot chat event."""
+        pass
+
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """
         Sync handler for incoming messages (called from WebSocket thread).
@@ -275,8 +423,8 @@ class FeishuChannel(BaseChannel):
             chat_type = message.chat_type  # "p2p" or "group"
             msg_type = message.message_type
             
-            # Add reaction to indicate "seen"
-            await self._add_reaction(message_id, "THUMBSUP")
+            # # Add reaction to indicate "seen"
+            await self._add_reaction(message_id, "FISTBUMP")
             
             # Parse message content
             if msg_type == "text":
