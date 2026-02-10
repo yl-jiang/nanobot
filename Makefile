@@ -36,7 +36,7 @@ agent:
 	$(PYTHON) -m nanobot.cli.commands agent $(ARGS)
 
 gateway:
-	caffeinate -s $(PYTHON) -m nanobot.cli.commands gateway $(ARGS)
+	$(PYTHON) -m nanobot.cli.commands gateway $(ARGS)
 
 onboard:
 	$(PYTHON) -m nanobot.cli.commands onboard
