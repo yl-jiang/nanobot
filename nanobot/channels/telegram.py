@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from telegram import BotCommand, Update
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 from nanobot.bus.events import OutboundMessage
@@ -142,13 +143,15 @@ class TelegramChannel(BaseChannel):
     
     async def _start_polling_session(self) -> None:
         """Internal: start a single polling session."""
-        from telegram.error import NetworkError
         
         # Build the application
         builder = Application.builder().token(self.config.token)
         if self.config.proxy:
             builder = builder.proxy(self.config.proxy).get_updates_proxy(self.config.proxy)
         self._app = builder.build()
+        
+        # Add error handler to catch network errors gracefully
+        self._app.add_error_handler(self._error_handler)
         
         # Add command handlers
         self._app.add_handler(CommandHandler("start", self._on_start))
@@ -183,7 +186,8 @@ class TelegramChannel(BaseChannel):
         # Start polling (this runs until stopped or error)
         await self._app.updater.start_polling(
             allowed_updates=["message"],
-            drop_pending_updates=True  # Ignore old messages on startup
+            drop_pending_updates=True,  # Ignore old messages on startup
+            error_callback=self._polling_error_callback,
         )
         
         # Keep running until stopped
@@ -201,6 +205,18 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.debug(f"Cleanup error (ignored): {e}")
             self._app = None
+    
+    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global error handler — catch network errors from handlers."""
+        error = context.error
+        if isinstance(error, (NetworkError, TimedOut)):
+            logger.warning(f"Telegram network error: {type(error).__name__}: {error}")
+            return
+        logger.error(f"Telegram handler error: {error}", exc_info=error)
+    
+    def _polling_error_callback(self, error: Exception) -> None:
+        """Handle errors from the polling loop (getUpdates failures)."""
+        logger.warning(f"Telegram polling error ({type(error).__name__}): {error}")
     
     async def stop(self) -> None:
         """Stop the Telegram bot."""
