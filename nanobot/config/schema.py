@@ -175,10 +175,18 @@ class ExecToolConfig(BaseModel):
     timeout: int = 60
 
 
+class TaskRetrievalConfig(BaseModel):
+    """Task retrieval service configuration."""
+    ip: str = ""
+    port: str = ""
+    collection_names: list[str] = Field(default_factory=list)
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration."""
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    task_retrieval: TaskRetrievalConfig = Field(default_factory=TaskRetrievalConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
 
 
