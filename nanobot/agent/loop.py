@@ -19,7 +19,6 @@ from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.send_file import SendFileTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.task_retrieval import TaskRetrievalTool
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import SessionManager
 
@@ -116,12 +115,10 @@ class AgentLoop:
             self.tools.register(CronTool(self.cron_service))
         
         # Task retrieval tool
-        if self.task_retrieval_config.ip and self.task_retrieval_config.port:
-            self.tools.register(TaskRetrievalTool(
-                ip=self.task_retrieval_config.ip,
-                port=self.task_retrieval_config.port,
-                collection_names=self.task_retrieval_config.collection_names,
-            ))
+        from nanobot.agent.tools.task_retrieval import create_task_retrieval_tool
+        tool = create_task_retrieval_tool(self.task_retrieval_config)
+        if tool:
+            self.tools.register(tool)
     
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""

@@ -14,7 +14,16 @@ class TaskRetrievalTool(Tool):
 
     def __init__(self, ip: str, port: str, collection_names: list[str]):
         self._base_url = f"http://{ip}:{port}/api/v1"
+        self._health_url = f"http://{ip}:{port}/health"
         self._collection_names = collection_names
+
+    def is_healthy(self, timeout: float = 5.0) -> bool:
+        """Check if the TaskRetrieval service is reachable and healthy."""
+        try:
+            resp = httpx.get(self._health_url, timeout=timeout)
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     @property
     def name(self) -> str:
@@ -104,3 +113,17 @@ class TaskRetrievalTool(Tool):
             return f"查询失败 (HTTP {e.response.status_code}): {e.response.text[:200]}"
         except Exception as e:
             return f"查询出错: {str(e)}"
+
+
+def create_task_retrieval_tool(config) -> TaskRetrievalTool | None:
+    """Create and return a TaskRetrievalTool if configured and service is healthy."""
+    if not config.ip or not config.port:
+        return None
+    tool = TaskRetrievalTool(
+        ip=config.ip, port=config.port, collection_names=config.collection_names,
+    )
+    if tool.is_healthy():
+        logger.info("Task retrieval service is healthy, tool enabled")
+        return tool
+    logger.warning("Task retrieval service unavailable, tool not registered")
+    return None
