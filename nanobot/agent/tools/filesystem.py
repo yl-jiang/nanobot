@@ -6,8 +6,20 @@ from typing import Any
 from nanobot.agent.tools.base import Tool
 
 
-def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
-    """Resolve path and optionally enforce directory restriction."""
+def check_restricted_dirs(resolved: Path, restricted_dirs: list[str]) -> bool:
+    """Return True if resolved path falls inside any restricted directory."""
+    for d in restricted_dirs:
+        rd = Path(d).expanduser().resolve()
+        if resolved == rd or rd in resolved.parents:
+            return True
+    return False
+
+
+def _resolve_path(
+    path: str,
+    allowed_dir: Path | None = None,
+) -> Path:
+    """Resolve path and enforce allowed directory restriction."""
     resolved = Path(path).expanduser().resolve()
     if allowed_dir and not str(resolved).startswith(str(allowed_dir.resolve())):
         raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
@@ -17,8 +29,9 @@ def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
 class ReadFileTool(Tool):
     """Tool to read file contents."""
     
-    def __init__(self, allowed_dir: Path | None = None):
+    def __init__(self, allowed_dir: Path | None = None, restricted_dirs: list[str] | None = None):
         self._allowed_dir = allowed_dir
+        self._restricted_dirs = restricted_dirs or []
 
     @property
     def name(self) -> str:
@@ -44,6 +57,8 @@ class ReadFileTool(Tool):
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
+            if self._restricted_dirs and check_restricted_dirs(file_path, self._restricted_dirs):
+                return f"Error: File not found: {path}"
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
@@ -60,8 +75,9 @@ class ReadFileTool(Tool):
 class WriteFileTool(Tool):
     """Tool to write content to a file."""
     
-    def __init__(self, allowed_dir: Path | None = None):
+    def __init__(self, allowed_dir: Path | None = None, restricted_dirs: list[str] | None = None):
         self._allowed_dir = allowed_dir
+        self._restricted_dirs = restricted_dirs or []
 
     @property
     def name(self) -> str:
@@ -91,6 +107,8 @@ class WriteFileTool(Tool):
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
+            if self._restricted_dirs and check_restricted_dirs(file_path, self._restricted_dirs):
+                return f"Error: File not found: {path}"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
@@ -103,8 +121,9 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
     
-    def __init__(self, allowed_dir: Path | None = None):
+    def __init__(self, allowed_dir: Path | None = None, restricted_dirs: list[str] | None = None):
         self._allowed_dir = allowed_dir
+        self._restricted_dirs = restricted_dirs or []
 
     @property
     def name(self) -> str:
@@ -138,6 +157,8 @@ class EditFileTool(Tool):
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
             file_path = _resolve_path(path, self._allowed_dir)
+            if self._restricted_dirs and check_restricted_dirs(file_path, self._restricted_dirs):
+                return f"Error: File not found: {path}"
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             
@@ -164,8 +185,9 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """Tool to list directory contents."""
     
-    def __init__(self, allowed_dir: Path | None = None):
+    def __init__(self, allowed_dir: Path | None = None, restricted_dirs: list[str] | None = None):
         self._allowed_dir = allowed_dir
+        self._restricted_dirs = restricted_dirs or []
 
     @property
     def name(self) -> str:
@@ -191,6 +213,8 @@ class ListDirTool(Tool):
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
             dir_path = _resolve_path(path, self._allowed_dir)
+            if self._restricted_dirs and check_restricted_dirs(dir_path, self._restricted_dirs):
+                return f"Error: Directory not found: {path}"
             if not dir_path.exists():
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():
@@ -198,6 +222,8 @@ class ListDirTool(Tool):
             
             items = []
             for item in sorted(dir_path.iterdir()):
+                if self._restricted_dirs and check_restricted_dirs(item.resolve(), self._restricted_dirs):
+                    continue
                 prefix = "📁 " if item.is_dir() else "📄 "
                 items.append(f"{prefix}{item.name}")
             

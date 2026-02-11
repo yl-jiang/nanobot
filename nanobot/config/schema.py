@@ -4,6 +4,11 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
+from nanobot.constants import (
+    DEFAULT_IMAGE_PARSER_SYSTEM_PROMPT,
+    DEFAULT_IMAGE_PARSER_USER_PROMPT,
+)
+
 
 class WhatsAppConfig(BaseModel):
     """WhatsApp channel configuration."""
@@ -24,8 +29,8 @@ class ImageParserConfig(BaseModel):
     """Image parsing configuration (vLLM vision)."""
     enabled: bool = False
     model: str = ""
-    prompt: str = "使用markdown语法，将图片中识别到的文字转换为markdown格式输出。"
-    system_prompt: str = "You are a helpful assistant."
+    prompt: str = DEFAULT_IMAGE_PARSER_USER_PROMPT
+    system_prompt: str = DEFAULT_IMAGE_PARSER_SYSTEM_PROMPT
     max_tokens: int = 4096
     timeout_seconds: int = 60
     api_base: str | None = None
@@ -239,6 +244,7 @@ class ToolsConfig(BaseModel):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     task_retrieval: TaskRetrievalConfig = Field(default_factory=TaskRetrievalConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+    restricted_dirs: list[str] = Field(default_factory=list)  # Directories the agent is forbidden from accessing
 
 
 class Config(BaseSettings):

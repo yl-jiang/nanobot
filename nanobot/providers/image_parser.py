@@ -8,6 +8,11 @@ import re
 
 from loguru import logger
 
+from nanobot.constants import (
+    DEFAULT_IMAGE_PARSER_SYSTEM_PROMPT,
+    DEFAULT_IMAGE_PARSER_USER_PROMPT,
+)
+
 try:
     from openai import AsyncOpenAI
     OPENAI_AVAILABLE = True
@@ -23,8 +28,8 @@ class VLLMImageProvider:
         api_base: str | None,
         model: str,
         api_key: str | None = None,
-        prompt: str = "使用markdown语法，将图片中识别到的文字转换为markdown格式输出。",
-        system_prompt: str = "You are a helpful assistant.",
+        prompt: str = DEFAULT_IMAGE_PARSER_USER_PROMPT,
+        system_prompt: str = DEFAULT_IMAGE_PARSER_SYSTEM_PROMPT,
         max_tokens: int = 4096,
         timeout_seconds: int = 60,
     ) -> None:
@@ -47,6 +52,8 @@ class VLLMImageProvider:
                 base_url=base_url,
                 timeout=timeout_seconds,
             )
+
+        logger.info("VLLM image parser initialized(api_base=%s, model=%s)", api_base, model)
 
     async def parse(self, image_path: str | Path, instruction: str | None = None) -> str:
         """Parse an image and return text description."""

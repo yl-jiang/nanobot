@@ -105,7 +105,6 @@ class FeishuChannel(BaseChannel):
         if not cfg.api_base or not cfg.model:
             logger.warning("Image parser enabled but api_base or model missing")
             return None
-        logger.info(f"Image parser enabled with model {cfg.model} at {cfg.api_base}")
         return VLLMImageProvider(
             api_base=cfg.api_base,
             api_key=cfg.api_key or None,
@@ -578,6 +577,12 @@ class FeishuChannel(BaseChannel):
             chat_type = message.chat_type  # "p2p" or "group"
             msg_type = message.message_type
             
+            # In group chats, only respond when bot is @mentioned
+            if chat_type == "group":
+                mentions = getattr(message, "mentions", None)
+                if not mentions:
+                    return
+            
             # Add reaction to indicate "seen"
             await self._add_reaction(message_id, "FISTBUMP")
             
@@ -593,6 +598,9 @@ class FeishuChannel(BaseChannel):
 
             if msg_type == "text":
                 text = raw.get("text", message.content or "")
+                # Strip @mention placeholders (e.g. @_user_1) in group messages
+                if chat_type == "group":
+                    text = re.sub(r"@_user_\d+\s*", "", text).strip()
                 # Handle slash commands
                 if text.strip().startswith("/"):
                     reply_to = chat_id if chat_type == "group" else sender_id
@@ -604,7 +612,6 @@ class FeishuChannel(BaseChannel):
 
             elif msg_type == "image":
                 image_key = raw.get("image_key", "")
-                logger.info(f"Received image message from {sender_id} in {chat_id} with image_key: {image_key}")
                 if image_key:
                     loop = asyncio.get_running_loop()
                     path = await loop.run_in_executor(
@@ -616,7 +623,6 @@ class FeishuChannel(BaseChannel):
                         if self._image_parser:
                             analysis = await self._image_parser.parse(path, raw.get("text", ""))
                             if analysis:
-                                logger.info(f"Image analysis result: {analysis}")
                                 content_parts.append(f"[image_analysis: {analysis}]")
                             else:
                                 # Analysis failed, pass raw image to main LLM

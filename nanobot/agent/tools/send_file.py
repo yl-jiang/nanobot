@@ -14,11 +14,13 @@ class SendFileTool(Tool):
         self, 
         send_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
         default_channel: str = "",
-        default_chat_id: str = ""
+        default_chat_id: str = "",
+        restricted_dirs: list[str] | None = None,
     ):
         self._send_callback = send_callback
         self._default_channel = default_channel
         self._default_chat_id = default_chat_id
+        self._restricted_dirs = restricted_dirs or []
     
     def set_context(self, channel: str, chat_id: str) -> None:
         """Set the current message context."""
@@ -89,6 +91,12 @@ class SendFileTool(Tool):
         
         if not file_path.is_file():
             return f"Error: Path is not a file: {path}"
+        
+        # Check restricted dirs (pretend file doesn't exist)
+        if self._restricted_dirs:
+            from nanobot.agent.tools.filesystem import check_restricted_dirs
+            if check_restricted_dirs(file_path.resolve(), self._restricted_dirs):
+                return f"Error: File not found: {path}"
         
         msg = OutboundMessage(
             channel=channel,

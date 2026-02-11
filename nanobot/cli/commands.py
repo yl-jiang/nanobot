@@ -363,6 +363,7 @@ def gateway(
         exec_config=config.tools.exec,
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        restricted_dirs=config.tools.restricted_dirs,
         session_manager=session_manager,
         task_retrieval_config=config.tools.task_retrieval,
     )
@@ -467,6 +468,7 @@ def agent(
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        restricted_dirs=config.tools.restricted_dirs,
         task_retrieval_config=config.tools.task_retrieval,
     )
     

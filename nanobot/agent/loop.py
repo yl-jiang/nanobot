@@ -46,6 +46,7 @@ class AgentLoop:
         exec_config: "ExecToolConfig | None" = None,
         cron_service: "CronService | None" = None,
         restrict_to_workspace: bool = False,
+        restricted_dirs: list[str] | None = None,
         session_manager: SessionManager | None = None,
         task_retrieval_config: "TaskRetrievalConfig | None" = None,
     ):
@@ -60,6 +61,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.restricted_dirs = restricted_dirs or []
         self.task_retrieval_config = task_retrieval_config or TaskRetrievalConfig()
         
         self.context = ContextBuilder(workspace)
@@ -73,6 +75,7 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            restricted_dirs=self.restricted_dirs,
         )
         
         self._running = False
@@ -82,10 +85,11 @@ class AgentLoop:
         """Register the default set of tools."""
         # File tools (restrict to workspace if configured)
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
-        self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
-        self.tools.register(EditFileTool(allowed_dir=allowed_dir))
-        self.tools.register(ListDirTool(allowed_dir=allowed_dir))
+        rd = self.restricted_dirs
+        self.tools.register(ReadFileTool(allowed_dir=allowed_dir, restricted_dirs=rd))
+        self.tools.register(WriteFileTool(allowed_dir=allowed_dir, restricted_dirs=rd))
+        self.tools.register(EditFileTool(allowed_dir=allowed_dir, restricted_dirs=rd))
+        self.tools.register(ListDirTool(allowed_dir=allowed_dir, restricted_dirs=rd))
         
         # Shell tool
         self.tools.register(ExecTool(
@@ -103,7 +107,10 @@ class AgentLoop:
         self.tools.register(message_tool)
         
         # Send file tool
-        send_file_tool = SendFileTool(send_callback=self.bus.publish_outbound)
+        send_file_tool = SendFileTool(
+            send_callback=self.bus.publish_outbound,
+            restricted_dirs=rd,
+        )
         self.tools.register(send_file_tool)
         
         # Spawn tool (for subagents)
