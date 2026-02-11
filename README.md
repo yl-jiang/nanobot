@@ -12,7 +12,7 @@
   </p>
 </div>
 
-🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [Clawdbot](https://github.com/openclaw/openclaw) 
+🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [OpenClaw](https://github.com/openclaw/openclaw) 
 
 ⚡️ Delivers core agent functionality in just **~4,000** lines of code — **99% smaller** than Clawdbot's 430k+ lines.
 
@@ -582,6 +582,7 @@ Config file: `~/.nanobot/config.json`
 > [!TIP]
 > - **Groq** provides free voice transcription via Whisper. If configured, Telegram voice messages will be automatically transcribed.
 > - **Zhipu Coding Plan**: If you're on Zhipu's coding plan, set `"apiBase": "https://open.bigmodel.cn/api/coding/paas/v4"` in your zhipu provider config.
+> - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
 
 | Provider | Purpose | Get API Key |
 |----------|---------|-------------|
@@ -596,6 +597,7 @@ Config file: `~/.nanobot/config.json`
 | `moonshot` | LLM (Moonshot/Kimi) | [platform.moonshot.cn](https://platform.moonshot.cn) |
 | `zhipu` | LLM (Zhipu GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
 | `vllm` | LLM (local, any OpenAI-compatible server) | — |
+| `minimax` | LLM (MiniMax direct) | [platform.minimax.io](https://platform.minimax.io) |
 
 <details>
 <summary><b>Adding a New Provider (Developer Guide)</b></summary>

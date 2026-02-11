@@ -195,8 +195,7 @@ def build_buffered_body(entries: list[MochatBufferedEntry], is_group: bool) -> s
                 lines.append(f"{label}: {entry.raw_body}")
                 continue
         lines.append(entry.raw_body)
-    return "
-".join(lines).strip()
+    return "\n".join(lines).strip()
 
 
 def parse_timestamp(value: Any) -> int | None:
@@ -305,8 +304,7 @@ class MochatChannel(BaseChannel):
         parts = ([msg.content.strip()] if msg.content and msg.content.strip() else [])
         if msg.media:
             parts.extend(m for m in msg.media if isinstance(m, str) and m.strip())
-        content = "
-".join(parts).strip()
+        content = "\n".join(parts).strip()
         if not content:
             return
 
@@ -852,8 +850,7 @@ class MochatChannel(BaseChannel):
             self._cursor_path.write_text(json.dumps({
                 "schemaVersion": 1, "updatedAt": datetime.utcnow().isoformat(),
                 "cursors": self._session_cursor,
-            }, ensure_ascii=False, indent=2) + "
-", "utf-8")
+            }, ensure_ascii=False, indent=2) + "\n", "utf-8")
         except Exception as e:
             logger.warning(f"Failed to save Mochat cursor file: {e}")
 
