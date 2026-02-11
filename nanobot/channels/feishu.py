@@ -675,6 +675,65 @@ class FeishuChannel(BaseChannel):
                 else:
                     content_parts.append("[audio]")
 
+            elif msg_type == "post":
+                # Rich text (post) message: contains paragraphs with text, images, links, etc.
+                # Feishu SDK already unwraps to locale level: {"title": "...", "content": [[...]]}
+                title = raw.get("title", "")
+                if title:
+                    content_parts.append(title)
+                paragraphs = raw.get("content", [])
+                for paragraph in paragraphs:
+                    line_parts: list[str] = []
+                    for element in paragraph:
+                        tag = element.get("tag", "")
+                        if tag == "text":
+                            line_parts.append(element.get("text", ""))
+                        elif tag == "a":
+                            href = element.get("href", "")
+                            link_text = element.get("text", href)
+                            line_parts.append(f"{link_text}({href})" if href else link_text)
+                        elif tag == "at":
+                            pass  # skip @mentions in post content
+                        elif tag == "img":
+                            image_key = element.get("image_key", "")
+                            if image_key:
+                                loop = asyncio.get_running_loop()
+                                path = await loop.run_in_executor(
+                                    None, self._download_resource_sync,
+                                    message_id, image_key, "image", "",
+                                )
+                                if path:
+                                    content_parts.append(f"[image: {path}]")
+                                    if self._image_parser:
+                                        analysis = await self._image_parser.parse(path, title or "")
+                                        if analysis:
+                                            content_parts.append(f"[image_analysis: {analysis}]")
+                                        else:
+                                            media_paths.append(path)
+                                    else:
+                                        media_paths.append(path)
+                                else:
+                                    content_parts.append("[image: download failed]")
+                        elif tag == "media":
+                            file_key = element.get("file_key", "")
+                            if file_key:
+                                loop = asyncio.get_running_loop()
+                                path = await loop.run_in_executor(
+                                    None, self._download_resource_sync,
+                                    message_id, file_key, "media", element.get("file_name", ""),
+                                )
+                                if path:
+                                    media_paths.append(path)
+                                    content_parts.append(f"[video: {path}]")
+                        elif tag == "emotion":
+                            line_parts.append(f"[{element.get('emoji_type', 'emoji')}]")
+                    if line_parts:
+                        line_text = "".join(line_parts)
+                        if chat_type == "group":
+                            line_text = re.sub(r"@_user_\d+\s*", "", line_text).strip()
+                        if line_text:
+                            content_parts.append(line_text)
+
             elif msg_type == "media":
                 # "media" is Feishu's type for video messages
                 file_key = raw.get("file_key", "")
