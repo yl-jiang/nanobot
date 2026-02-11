@@ -387,6 +387,8 @@ Uses **WebSocket** long connection — no public IP required.
 
 > `encryptKey` and `verificationToken` are optional for Long Connection mode.
 > `allowFrom`: Leave empty to allow all users, or add `["ou_xxx"]` to restrict access.
+> 如果启用全局 `providers.imageParser`，飞书图片会自动解析为文本。
+> 如果配置了 `providers.groq.apiKey`，飞书语音消息会自动转写为文本。
 
 **3. Run**
 
@@ -583,6 +585,17 @@ Config file: `~/.nanobot/config.json`
 > - **Groq** provides free voice transcription via Whisper. If configured, Telegram voice messages will be automatically transcribed.
 > - **Zhipu Coding Plan**: If you're on Zhipu's coding plan, set `"apiBase": "https://open.bigmodel.cn/api/coding/paas/v4"` in your zhipu provider config.
 > - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
+> - **Image Parser (vLLM Vision)**: Configure under `providers.imageParser` (uses OpenAI-compatible vLLM). If `apiBase` is omitted, it falls back to `providers.vllm.apiBase`.
+
+Example (vLLM image parser):
+```json
+{
+  "providers": {
+    "vllm": { "apiBase": "http://localhost:8000/v1" },
+    "imageParser": { "enabled": true, "model": "glm-4.5v" }
+  }
+}
+```
 
 | Provider | Purpose | Get API Key |
 |----------|---------|-------------|

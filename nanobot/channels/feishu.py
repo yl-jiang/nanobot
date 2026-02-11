@@ -12,7 +12,10 @@ from loguru import logger
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
-from nanobot.config.schema import FeishuConfig
+from nanobot.config.schema import FeishuConfig, ImageParserConfig
+from nanobot.providers.image_parser import VLLMImageProvider
+from nanobot.providers.transcription import GroqTranscriptionProvider
+from nanobot.session.manager import SessionManager
 
 try:
     import lark_oapi as lark
@@ -75,7 +78,14 @@ class FeishuChannel(BaseChannel):
     
     name = "feishu"
     
-    def __init__(self, config: FeishuConfig, bus: MessageBus):
+    def __init__(
+        self,
+        config: FeishuConfig,
+        bus: MessageBus,
+        groq_api_key: str | None = None,
+        image_parser_config: ImageParserConfig | None = None,
+        session_manager: SessionManager | None = None,
+    ):
         super().__init__(config, bus)
         self.config: FeishuConfig = config
         self._client: Any = None
@@ -83,7 +93,55 @@ class FeishuChannel(BaseChannel):
         self._ws_thread: threading.Thread | None = None
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()  # Ordered dedup cache
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._transcriber = GroqTranscriptionProvider(api_key=groq_api_key) if groq_api_key else None
+        self._image_parser = self._build_image_parser(image_parser_config)
+        self.session_manager = session_manager
+
+    @staticmethod
+    def _build_image_parser(cfg: ImageParserConfig | None) -> VLLMImageProvider | None:
+        """Build VLLMImageProvider from global providers.imageParser config."""
+        if not cfg or not cfg.enabled:
+            return None
+        if not cfg.api_base or not cfg.model:
+            logger.warning("Image parser enabled but api_base or model missing")
+            return None
+        logger.info(f"Image parser enabled with model {cfg.model} at {cfg.api_base}")
+        return VLLMImageProvider(
+            api_base=cfg.api_base,
+            api_key=cfg.api_key or None,
+            model=cfg.model,
+            prompt=cfg.prompt,
+            system_prompt=cfg.system_prompt,
+            max_tokens=cfg.max_tokens,
+            timeout_seconds=cfg.timeout_seconds,
+        )
     
+    async def _handle_command(self, text: str, sender_id: str, reply_to: str) -> bool:
+        """Handle slash commands. Returns True if command was handled."""
+        cmd = text.split()[0].lower()
+        if cmd == "/reset":
+            if self.session_manager is None:
+                await self._send_text_reply(reply_to, "⚠️ 会话管理不可用。")
+                return True
+            session_key = f"{self.name}:{reply_to}"
+            session = self.session_manager.get_or_create(session_key)
+            msg_count = len(session.messages)
+            session.clear()
+            self.session_manager.save(session)
+            logger.info(f"Session reset for {session_key} (cleared {msg_count} messages)")
+            await self._send_text_reply(reply_to, f"🔄 对话历史已清空（共 {msg_count} 条消息），重新开始吧！")
+            return True
+        elif cmd == "/help":
+            help_text = (
+                "🐈 nanobot 命令列表\n\n"
+                "/reset — 清空对话历史\n"
+                "/help — 显示此帮助信息\n\n"
+                "直接发送消息即可开始对话！"
+            )
+            await self._send_text_reply(reply_to, help_text)
+            return True
+        return False
+
     async def start(self) -> None:
         """Start the Feishu bot with WebSocket long connection."""
         if not FEISHU_AVAILABLE:
@@ -388,6 +446,32 @@ class FeishuChannel(BaseChannel):
             except Exception as e:
                 logger.error(f"Error sending media {path.name}: {e}")
 
+    async def _send_text_reply(self, chat_id: str, text: str) -> None:
+        """Send a plain text reply to the specified chat/user."""
+        if not self._client:
+            return
+        if chat_id.startswith("oc_"):
+            receive_id_type = "chat_id"
+        else:
+            receive_id_type = "open_id"
+        content = json.dumps({"text": text}, ensure_ascii=False)
+        request = CreateMessageRequest.builder() \
+            .receive_id_type(receive_id_type) \
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("text")
+                .content(content)
+                .build()
+            ).build()
+        try:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(None, self._client.im.v1.message.create, request)
+            if not response.success():
+                logger.error(f"Failed to send text reply: code={response.code}, msg={response.msg}")
+        except Exception as e:
+            logger.error(f"Error sending text reply: {e}")
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu."""
         if not self._client:
@@ -509,11 +593,18 @@ class FeishuChannel(BaseChannel):
 
             if msg_type == "text":
                 text = raw.get("text", message.content or "")
+                # Handle slash commands
+                if text.strip().startswith("/"):
+                    reply_to = chat_id if chat_type == "group" else sender_id
+                    handled = await self._handle_command(text.strip(), sender_id, reply_to)
+                    if handled:
+                        return
                 if text:
                     content_parts.append(text)
 
             elif msg_type == "image":
                 image_key = raw.get("image_key", "")
+                logger.info(f"Received image message from {sender_id} in {chat_id} with image_key: {image_key}")
                 if image_key:
                     loop = asyncio.get_running_loop()
                     path = await loop.run_in_executor(
@@ -521,8 +612,18 @@ class FeishuChannel(BaseChannel):
                         message_id, image_key, "image", "",
                     )
                     if path:
-                        media_paths.append(path)
                         content_parts.append(f"[image: {path}]")
+                        if self._image_parser:
+                            analysis = await self._image_parser.parse(path, raw.get("text", ""))
+                            if analysis:
+                                logger.info(f"Image analysis result: {analysis}")
+                                content_parts.append(f"[image_analysis: {analysis}]")
+                            else:
+                                # Analysis failed, pass raw image to main LLM
+                                media_paths.append(path)
+                        else:
+                            # No image parser, pass raw image to main LLM
+                            media_paths.append(path)
                     else:
                         content_parts.append("[image: download failed]")
                 else:
@@ -554,8 +655,15 @@ class FeishuChannel(BaseChannel):
                         message_id, file_key, "audio", "",
                     )
                     if path:
-                        media_paths.append(path)
                         content_parts.append(f"[audio: {path}]")
+                        if self._transcriber:
+                            transcription = await self._transcriber.transcribe(path)
+                            if transcription:
+                                content_parts.append(f"[transcription: {transcription}]")
+                            else:
+                                media_paths.append(path)
+                        else:
+                            media_paths.append(path)
                     else:
                         content_parts.append("[audio: download failed]")
                 else:

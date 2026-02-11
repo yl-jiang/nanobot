@@ -51,7 +51,16 @@ class ChannelManager:
             },
             {"name": "whatsapp", "module": "nanobot.channels.whatsapp", "class": "WhatsAppChannel"},
             {"name": "discord", "module": "nanobot.channels.discord", "class": "DiscordChannel"},
-            {"name": "feishu", "module": "nanobot.channels.feishu", "class": "FeishuChannel"},
+            {
+                "name": "feishu",
+                "module": "nanobot.channels.feishu",
+                "class": "FeishuChannel",
+                "extra_args": lambda config, sm: {
+                    "groq_api_key": config.providers.groq.api_key,
+                    "image_parser_config": config.providers.image_parser,
+                    "session_manager": sm,
+                }
+            },
             {"name": "mochat", "module": "nanobot.channels.mochat", "class": "MochatChannel"},
             {"name": "dingtalk", "module": "nanobot.channels.dingtalk", "class": "DingTalkChannel"},
             {"name": "email", "module": "nanobot.channels.email", "class": "EmailChannel"},

@@ -20,6 +20,18 @@ class TelegramConfig(BaseModel):
     proxy: str | None = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
 
 
+class ImageParserConfig(BaseModel):
+    """Image parsing configuration (vLLM vision)."""
+    enabled: bool = False
+    model: str = ""
+    prompt: str = "使用markdown语法，将图片中识别到的文字转换为markdown格式输出。"
+    system_prompt: str = "You are a helpful assistant."
+    max_tokens: int = 4096
+    timeout_seconds: int = 60
+    api_base: str | None = None
+    api_key: str = ""
+
+
 class FeishuConfig(BaseModel):
     """Feishu/Lark channel configuration using WebSocket long connection."""
     enabled: bool = False
@@ -189,6 +201,7 @@ class ProvidersConfig(BaseModel):
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
+    image_parser: ImageParserConfig = Field(default_factory=ImageParserConfig)
 
 
 class GatewayConfig(BaseModel):
