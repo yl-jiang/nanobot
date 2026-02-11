@@ -26,6 +26,7 @@ try:
         CreateMessageReactionRequest,
         CreateMessageReactionRequestBody,
         Emoji,
+        GetMessageResourceRequest,
         P2ImMessageReceiveV1,
     )
     FEISHU_AVAILABLE = True
@@ -38,8 +39,25 @@ except ImportError:
 MSG_TYPE_MAP = {
     "image": "[image]",
     "audio": "[audio]",
+    "media": "[video]",
     "file": "[file]",
     "sticker": "[sticker]",
+}
+
+# Feishu msg_type to resource type mapping for download API
+_RESOURCE_TYPE_MAP = {
+    "image": "image",
+    "audio": "file",
+    "media": "file",
+    "file": "file",
+}
+
+# File extension guesses by msg_type (fallback when filename is absent)
+_DEFAULT_EXT_MAP = {
+    "image": ".png",
+    "audio": ".opus",
+    "media": ".mp4",
+    "file": ".bin",
 }
 
 
@@ -101,6 +119,8 @@ class FeishuChannel(BaseChannel):
             self._on_reaction_deleted
         ).register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
             self._on_bot_p2p_chat_entered
+        ).register_p2_task_task_update_tenant_v1(
+            self._on_noop_event
         ).build()
         
         # Create WebSocket client for long connection
@@ -169,6 +189,53 @@ class FeishuChannel(BaseChannel):
         
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
+    
+    def _download_resource_sync(
+        self, message_id: str, file_key: str, msg_type: str, file_name: str = "",
+    ) -> str | None:
+        """Download a media resource from Feishu and save to ~/.nanobot/media/."""
+        from pathlib import Path
+
+        resource_type = _RESOURCE_TYPE_MAP.get(msg_type)
+        if not resource_type:
+            logger.warning(f"Unsupported resource type for download: {msg_type}")
+            return None
+
+        try:
+            request = GetMessageResourceRequest.builder() \
+                .message_id(message_id) \
+                .file_key(file_key) \
+                .type(resource_type) \
+                .build()
+            response = self._client.im.v1.message_resource.get(request)
+
+            if not response.success():
+                logger.error(
+                    f"Failed to download resource: code={response.code}, msg={response.msg}"
+                )
+                return None
+
+            # Determine file name & path
+            media_dir = Path.home() / ".nanobot" / "media"
+            media_dir.mkdir(parents=True, exist_ok=True)
+
+            if file_name:
+                safe_name = file_name.replace("/", "_").replace("\\", "_")
+            else:
+                ext = _DEFAULT_EXT_MAP.get(msg_type, ".bin")
+                safe_name = f"{file_key[:20]}{ext}"
+            file_path = media_dir / safe_name
+
+            # Write content
+            with open(file_path, "wb") as f:
+                f.write(response.file.read())
+
+            logger.debug(f"Downloaded {msg_type} resource -> {file_path}")
+            return str(file_path)
+
+        except Exception as e:
+            logger.error(f"Error downloading resource from Feishu: {e}")
+            return None
     
     # Regex to match markdown tables (header + separator + data rows)
     _TABLE_RE = re.compile(
@@ -388,6 +455,10 @@ class FeishuChannel(BaseChannel):
         """Handle user entering bot chat event."""
         pass
 
+    def _on_noop_event(self, data: Any) -> None:
+        """No-op handler for subscribed but unused events (e.g. task updates)."""
+        pass
+
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """
         Sync handler for incoming messages (called from WebSocket thread).
@@ -397,7 +468,7 @@ class FeishuChannel(BaseChannel):
             asyncio.run_coroutine_threadsafe(self._on_message(data), self._loop)
     
     async def _on_message(self, data: "P2ImMessageReceiveV1") -> None:
-        """Handle incoming message from Feishu."""
+        """Handle incoming message from Feishu (text, images, files, audio, video)."""
         try:
             event = data.event
             message = event.message
@@ -423,20 +494,100 @@ class FeishuChannel(BaseChannel):
             chat_type = message.chat_type  # "p2p" or "group"
             msg_type = message.message_type
             
-            # # Add reaction to indicate "seen"
+            # Add reaction to indicate "seen"
             await self._add_reaction(message_id, "FISTBUMP")
             
-            # Parse message content
+            # Parse message content & download media
+            content_parts: list[str] = []
+            media_paths: list[str] = []
+
+            raw = {}
+            try:
+                raw = json.loads(message.content) if message.content else {}
+            except json.JSONDecodeError:
+                pass
+
             if msg_type == "text":
-                try:
-                    content = json.loads(message.content).get("text", "")
-                except json.JSONDecodeError:
-                    content = message.content or ""
+                text = raw.get("text", message.content or "")
+                if text:
+                    content_parts.append(text)
+
+            elif msg_type == "image":
+                image_key = raw.get("image_key", "")
+                if image_key:
+                    loop = asyncio.get_running_loop()
+                    path = await loop.run_in_executor(
+                        None, self._download_resource_sync,
+                        message_id, image_key, "image", "",
+                    )
+                    if path:
+                        media_paths.append(path)
+                        content_parts.append(f"[image: {path}]")
+                    else:
+                        content_parts.append("[image: download failed]")
+                else:
+                    content_parts.append("[image]")
+
+            elif msg_type == "file":
+                file_key = raw.get("file_key", "")
+                file_name = raw.get("file_name", "")
+                if file_key:
+                    loop = asyncio.get_running_loop()
+                    path = await loop.run_in_executor(
+                        None, self._download_resource_sync,
+                        message_id, file_key, "file", file_name,
+                    )
+                    if path:
+                        media_paths.append(path)
+                        content_parts.append(f"[file: {path}]")
+                    else:
+                        content_parts.append(f"[file: download failed ({file_name})]")
+                else:
+                    content_parts.append("[file]")
+
+            elif msg_type == "audio":
+                file_key = raw.get("file_key", "")
+                if file_key:
+                    loop = asyncio.get_running_loop()
+                    path = await loop.run_in_executor(
+                        None, self._download_resource_sync,
+                        message_id, file_key, "audio", "",
+                    )
+                    if path:
+                        media_paths.append(path)
+                        content_parts.append(f"[audio: {path}]")
+                    else:
+                        content_parts.append("[audio: download failed]")
+                else:
+                    content_parts.append("[audio]")
+
+            elif msg_type == "media":
+                # "media" is Feishu's type for video messages
+                file_key = raw.get("file_key", "")
+                file_name = raw.get("file_name", "")
+                if file_key:
+                    loop = asyncio.get_running_loop()
+                    path = await loop.run_in_executor(
+                        None, self._download_resource_sync,
+                        message_id, file_key, "media", file_name,
+                    )
+                    if path:
+                        media_paths.append(path)
+                        content_parts.append(f"[video: {path}]")
+                    else:
+                        content_parts.append(f"[video: download failed]")
+                else:
+                    content_parts.append("[video]")
+
             else:
-                content = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
+                content_parts.append(MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]"))
+
+            content = "\n".join(content_parts) if content_parts else "[empty message]"
             
-            if not content:
+            if not content.strip():
                 return
+            
+            logger.debug(f"Feishu message from {sender_id} ({msg_type}): {content[:80]}...")
             
             # Forward to message bus
             reply_to = chat_id if chat_type == "group" else sender_id
@@ -444,6 +595,7 @@ class FeishuChannel(BaseChannel):
                 sender_id=sender_id,
                 chat_id=reply_to,
                 content=content,
+                media=media_paths,
                 metadata={
                     "message_id": message_id,
                     "chat_type": chat_type,
