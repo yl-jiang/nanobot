@@ -6,7 +6,6 @@ build/
 *.egg-info/
 .DS_Store
 *.egg
-*.pyc
 *.pyo
 *.pyd
 *.pyw
@@ -20,3 +19,4 @@ poetry.lock
 .pytest_cache/
 tests/
 botpy.log
+docs/

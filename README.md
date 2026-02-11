@@ -20,7 +20,7 @@
 
 ## 📢 News
 
-- **2026-02-10** 🎉 Released v0.1.3.post6 with multiple improvements! Check the [notes](https://github.com/HKUDS/nanobot/releases/tag/v0.1.3.post6) and our [roadmap](https://github.com/HKUDS/nanobot/discussions/431).
+- **2026-02-10** 🎉 Released v0.1.3.post6 with improvements! Check the updates [notes](https://github.com/HKUDS/nanobot/releases/tag/v0.1.3.post6) and our [roadmap](https://github.com/HKUDS/nanobot/discussions/431).
 - **2026-02-09** 💬 Added Slack, Email, and QQ support — nanobot now supports multiple chat platforms!
 - **2026-02-08** 🔧 Refactored Providers—adding a new LLM provider now takes just 2 simple steps! Check [here](#providers).
 - **2026-02-07** 🚀 Released v0.1.3.post5 with Qwen support & several key improvements! Check [here](https://github.com/HKUDS/nanobot/releases/tag/v0.1.3.post5) for details.
@@ -93,9 +93,7 @@ pip install nanobot-ai
 
 ## 🚀 Quick Start
 
-> [!TIP]
-> Set your API key in `~/.nanobot/config.json`.
-> Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global) · [DashScope](https://dashscope.console.aliyun.com) (Qwen) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
+> [!TIP]> Set your API key in `~/.nanobot/config.json`.> Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 
 **1. Initialize**
 
@@ -163,8 +161,7 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 nanobot agent -m "Hello from my local LLM!"
 ```
 
-> [!TIP]
-> The `apiKey` can be any non-empty string for local servers that don't require authentication.
+> [!TIP]> The `apiKey` can be any non-empty string for local servers that don't require authentication.
 
 ## 💬 Chat Apps
 
@@ -204,8 +201,7 @@ Talk to your nanobot through Telegram, Discord, WhatsApp, Feishu, Mochat, DingTa
 }
 ```
 
-> You can find your **User ID** in Telegram settings. It is shown as `@yourUserId`.
-> Copy this value **without the `@` symbol** and paste it into the config file.
+> You can find your **User ID** in Telegram settings. It is shown as `@yourUserId`.> Copy this value **without the `@` symbol** and paste it into the config file.
 
 
 **3. Run**
@@ -385,10 +381,7 @@ Uses **WebSocket** long connection — no public IP required.
 }
 ```
 
-> `encryptKey` and `verificationToken` are optional for Long Connection mode.
-> `allowFrom`: Leave empty to allow all users, or add `["ou_xxx"]` to restrict access.
-> 如果启用全局 `providers.imageParser`，飞书图片会自动解析为文本。
-> 如果配置了 `providers.groq.apiKey`，飞书语音消息会自动转写为文本。
+> `encryptKey` and `verificationToken` are optional for Long Connection mode.> `allowFrom`: Leave empty to allow all users, or add `["ou_xxx"]` to restrict access.> 如果启用全局 `providers.imageParser`，飞书图片会自动解析为文本。> 如果配置了 `providers.groq.apiKey`，飞书语音消息会自动转写为文本。
 
 **3. Run**
 
@@ -396,8 +389,7 @@ Uses **WebSocket** long connection — no public IP required.
 nanobot gateway
 ```
 
-> [!TIP]
-> Feishu uses WebSocket to receive messages — no webhook or public IP needed!
+> [!TIP]> Feishu uses WebSocket to receive messages — no webhook or public IP needed!
 
 </details>
 
@@ -418,8 +410,7 @@ Uses **botpy SDK** with WebSocket — no public IP required. Currently supports 
 
 **3. Configure**
 
-> - `allowFrom`: Leave empty for public access, or add user openids to restrict. You can find openids in the nanobot logs when a user messages the bot.
-> - For production: submit a review in the bot console and publish. See [QQ Bot Docs](https://bot.q.qq.com/wiki/) for the full publishing flow.
+> - `allowFrom`: Leave empty for public access, or add user openids to restrict. You can find openids in the nanobot logs when a user messages the bot.> - For production: submit a review in the bot console and publish. See [QQ Bot Docs](https://bot.q.qq.com/wiki/) for the full publishing flow.
 
 ```json
 {
@@ -522,9 +513,7 @@ nanobot gateway
 
 DM the bot directly or @mention it in a channel — it should respond!
 
-> [!TIP]
-> - `groupPolicy`: `"mention"` (default — respond only when @mentioned), `"open"` (respond to all channel messages), or `"allowlist"` (restrict to specific channels).
-> - DM policy defaults to open. Set `"dm": {"enabled": false}` to disable DMs.
+> [!TIP]> - `groupPolicy`: `"mention"` (default — respond only when @mentioned), `"open"` (respond to all channel messages), or `"allowlist"` (restrict to specific channels).> - DM policy defaults to open. Set `"dm": {"enabled": false}` to disable DMs.
 
 </details>
 
@@ -540,10 +529,7 @@ Give nanobot its own email account. It polls **IMAP** for incoming mail and repl
 
 **2. Configure**
 
-> - `consentGranted` must be `true` to allow mailbox access. This is a safety gate — set `false` to fully disable.
-> - `allowFrom`: Leave empty to accept emails from anyone, or restrict to specific senders.
-> - `smtpUseTls` and `smtpUseSsl` default to `true` / `false` respectively, which is correct for Gmail (port 587 + STARTTLS). No need to set them explicitly.
-> - Set `"autoReplyEnabled": false` if you only want to read/analyze emails without sending automatic replies.
+> - `consentGranted` must be `true` to allow mailbox access. This is a safety gate — set `false` to fully disable.> - `allowFrom`: Leave empty to accept emails from anyone, or restrict to specific senders.> - `smtpUseTls` and `smtpUseSsl` default to `true` / `false` respectively, which is correct for Gmail (port 587 + STARTTLS). No need to set them explicitly.> - Set `"autoReplyEnabled": false` if you only want to read/analyze emails without sending automatic replies.
 
 ```json
 {
@@ -581,11 +567,7 @@ Config file: `~/.nanobot/config.json`
 
 ### Providers
 
-> [!TIP]
-> - **Groq** provides free voice transcription via Whisper. If configured, Telegram voice messages will be automatically transcribed.
-> - **Zhipu Coding Plan**: If you're on Zhipu's coding plan, set `"apiBase": "https://open.bigmodel.cn/api/coding/paas/v4"` in your zhipu provider config.
-> - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
-> - **Image Parser (vLLM Vision)**: Configure under `providers.imageParser` (uses OpenAI-compatible vLLM). If `apiBase` is omitted, it falls back to `providers.vllm.apiBase`.
+> [!TIP]> - **Groq** provides free voice transcription via Whisper. If configured, Telegram voice messages will be automatically transcribed.> - **Zhipu Coding Plan**: If you're on Zhipu's coding plan, set `"apiBase": "https://open.bigmodel.cn/api/coding/paas/v4"` in your zhipu provider config.> - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.> - **Image Parser (vLLM Vision)**: Configure under `providers.imageParser` (uses OpenAI-compatible vLLM). If `apiBase` is omitted, it falls back to `providers.vllm.apiBase`.
 
 Example (vLLM image parser):
 ```json
@@ -702,8 +684,7 @@ nanobot cron remove <job_id>
 
 ## 🐳 Docker
 
-> [!TIP]
-> The `-v ~/.nanobot:/root/.nanobot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
+> [!TIP]> The `-v ~/.nanobot:/root/.nanobot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
 
 Build and run nanobot in a container:
 
@@ -788,3 +769,4 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
 <p align="center">
   <sub>nanobot is for educational, research, and technical exchange purposes only</sub>
 </p>
+
