@@ -1,0 +1,42 @@
+# nanobot /help command content
+# Shared across all channels (Feishu, Telegram, QQ, etc.)
+# Each channel reads this file and formats it for their platform.
+
+title: "🐈 nanobot 使用指南"
+
+capabilities:
+  title: "🧠 我能做什么"
+  items:
+    - "智能对话 — 回答问题、翻译、写作、编程"
+    - "联网搜索 — 查询实时信息和网页内容"
+    - "定时任务 — 设置提醒和周期性任务"
+    - "文件处理 — 读写文件、发送文件"
+    - "图片理解 — 识别和分析图片内容"
+    - "语音理解 — 语音转文字后分析"
+
+usage:
+  title: "💬 对话方式"
+  items:
+    - "私聊 →  直接发消息即可对话"
+    - "群聊 →  @我 + 你的消息"
+    - "引用 →  回复消息并 @我，自动带上原文"
+
+message_types:
+  title: "📎 支持的消息类型"
+  text: "文字 · 图片 · 文件 · 语音 · 视频 · 富文本"
+
+commands:
+  title: "⚡ 命令"
+  items:
+    - name: "/reset"
+      description: "清空对话历史，重新开始"
+    - name: "/context N 问题"
+      description: "携带最近 N 条聊天记录提问（N: 1~50）"
+      example: "/context 10 总结一下刚才的讨论"
+    - name: "/help"
+      description: "显示本帮助"
+
+notices:
+  - "语音依赖转文字服务及特定网络环境，可能无法正常使用"
+  - "联网搜索依赖外部搜索服务及特定网络环境，可能无法正常使用"
+  - "暂不支持合并转发消息"

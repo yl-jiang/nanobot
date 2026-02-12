@@ -5,8 +5,10 @@ import json
 import re
 import threading
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any
 
+import yaml
 from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
@@ -16,6 +18,11 @@ from nanobot.config.schema import FeishuConfig, ImageParserConfig
 from nanobot.providers.image_parser import VLLMImageProvider
 from nanobot.providers.transcription import GroqTranscriptionProvider
 from nanobot.session.manager import SessionManager
+
+# Load shared help content
+_HELP_YAML_PATH = Path(__file__).parent / "help_content.yaml"
+with open(_HELP_YAML_PATH, encoding="utf-8") as _f:
+    HELP_CONTENT = yaml.safe_load(_f)
 
 try:
     import lark_oapi as lark
@@ -29,7 +36,9 @@ try:
         CreateMessageReactionRequest,
         CreateMessageReactionRequestBody,
         Emoji,
+        GetMessageRequest,
         GetMessageResourceRequest,
+        ListMessageRequest,
         P2ImMessageReceiveV1,
     )
     FEISHU_AVAILABLE = True
@@ -115,7 +124,10 @@ class FeishuChannel(BaseChannel):
             timeout_seconds=cfg.timeout_seconds,
         )
     
-    async def _handle_command(self, text: str, sender_id: str, reply_to: str) -> bool:
+    async def _handle_command(
+        self, text: str, sender_id: str, reply_to: str,
+        *, chat_id: str = "", chat_type: str = "p2p", message_id: str = "",
+    ) -> bool:
         """Handle slash commands. Returns True if command was handled."""
         cmd = text.split()[0].lower()
         if cmd == "/reset":
@@ -131,15 +143,72 @@ class FeishuChannel(BaseChannel):
             await self._send_text_reply(reply_to, f"🔄 对话历史已清空（共 {msg_count} 条消息），重新开始吧！")
             return True
         elif cmd == "/help":
-            help_text = (
-                "🐈 nanobot 命令列表\n\n"
-                "/reset — 清空对话历史\n"
-                "/help — 显示此帮助信息\n\n"
-                "直接发送消息即可开始对话！"
-            )
-            await self._send_text_reply(reply_to, help_text)
+            help_content = self._build_help_post()
+            await self._send_post_reply(reply_to, HELP_CONTENT["title"], help_content)
             return True
+        elif cmd == "/context":
+            return await self._handle_context_command(
+                text, sender_id, reply_to,
+                chat_id=chat_id, chat_type=chat_type, message_id=message_id,
+            )
         return False
+
+    async def _handle_context_command(
+        self, text: str, sender_id: str, reply_to: str,
+        *, chat_id: str = "", chat_type: str = "p2p", message_id: str = "",
+    ) -> bool:
+        """Handle /context N <question> — fetch recent N messages as context."""
+        parts = text.split(maxsplit=2)
+        # Parse: /context N <question>
+        if len(parts) < 3:
+            await self._send_text_reply(
+                reply_to,
+                "用法: /context N <问题>\n"
+                "例如: /context 10 总结一下刚才的讨论",
+            )
+            return True
+        try:
+            count = int(parts[1])
+        except ValueError:
+            await self._send_text_reply(reply_to, "⚠️ N 必须是数字，例如: /context 10 总结讨论")
+            return True
+        if count < 1 or count > 50:
+            await self._send_text_reply(reply_to, "⚠️ N 的范围是 1~50。")
+            return True
+
+        question = parts[2].strip()
+        if not question:
+            await self._send_text_reply(reply_to, "⚠️ 请在 /context N 后面加上你的问题。")
+            return True
+
+        # Fetch recent messages from chat (exclude current command message)
+        target_chat_id = chat_id or reply_to
+        loop = asyncio.get_running_loop()
+        messages = await loop.run_in_executor(
+            None, self._list_chat_messages_sync, target_chat_id, count, message_id,
+        )
+
+        if not messages:
+            await self._send_text_reply(reply_to, "⚠️ 未能获取聊天记录，请检查机器人权限。")
+            return True
+
+        # Format context
+        context_lines = [f"[{m['sender']}]: {m['text']}" for m in messages]
+        context_block = "\n".join(context_lines)
+        content = (
+            f"以下是最近 {len(messages)} 条聊天记录作为上下文：\n"
+            f"---\n{context_block}\n---\n\n"
+            f"基于以上聊天记录，用户的问题是：{question}"
+        )
+
+        logger.debug(f"Feishu /context: {len(messages)} messages, question: {question[:50]}")
+        await self._handle_message(
+            sender_id=sender_id,
+            chat_id=reply_to,
+            content=content,
+            metadata={"chat_type": chat_type, "msg_type": "text"},
+        )
+        return True
 
     async def start(self) -> None:
         """Start the Feishu bot with WebSocket long connection."""
@@ -293,7 +362,130 @@ class FeishuChannel(BaseChannel):
         except Exception as e:
             logger.error(f"Error downloading resource from Feishu: {e}")
             return None
-    
+
+    def _get_message_content_sync(self, message_id: str) -> tuple[str, str]:
+        """Fetch a single message's type and text content via GetMessage API.
+        
+        Returns (msg_type, text_content). Returns ("", "") on failure.
+        """
+        if not self._client:
+            return ("", "")
+        try:
+            request = GetMessageRequest.builder() \
+                .message_id(message_id) \
+                .build()
+            response = self._client.im.v1.message.get(request)
+            if not response.success():
+                return ("", "")
+            items = getattr(response.data, "items", None) or []
+            if not items:
+                return ("", "")
+            msg = items[0]
+            msg_type = getattr(msg, "msg_type", "") or ""
+            body = getattr(msg, "body", None)
+            content = body.content if body and body.content else ""
+            # For text messages, extract the text field from JSON
+            if msg_type == "text" and content:
+                try:
+                    return (msg_type, json.loads(content).get("text", content))
+                except json.JSONDecodeError:
+                    return (msg_type, content)
+            # For post messages, extract title + text from rich content
+            if msg_type == "post" and content:
+                try:
+                    parsed = json.loads(content)
+                    parts = []
+                    title = parsed.get("title", "")
+                    if title:
+                        parts.append(title)
+                    for paragraph in parsed.get("content", []):
+                        for el in paragraph:
+                            if el.get("tag") == "text":
+                                parts.append(el.get("text", ""))
+                            elif el.get("tag") == "a":
+                                parts.append(el.get("text", ""))
+                    return (msg_type, "\n".join(parts) if parts else content)
+                except json.JSONDecodeError:
+                    return (msg_type, content)
+            return (msg_type, content)
+        except Exception as e:
+            logger.error(f"Error fetching message {message_id}: {e}")
+            return ("", "")
+
+    def _list_chat_messages_sync(
+        self, chat_id: str, count: int = 20, exclude_message_id: str = "",
+    ) -> list[dict]:
+        """Fetch recent messages from a chat via ListMessage API.
+        
+        Returns list of dicts with keys: sender, msg_type, text (newest last).
+        Excludes the message with exclude_message_id if provided.
+        """
+        if not self._client:
+            return []
+        try:
+            fetch_size = min(count + 1, 50) if exclude_message_id else min(count, 50)
+            request = ListMessageRequest.builder() \
+                .container_id_type("chat") \
+                .container_id(chat_id) \
+                .page_size(fetch_size) \
+                .sort_type("ByCreateTimeDesc") \
+                .build()
+            response = self._client.im.v1.message.list(request)
+            if not response.success():
+                logger.error(
+                    f"Failed to list chat messages: code={response.code}, msg={response.msg}"
+                )
+                return []
+
+            items = getattr(response.data, "items", None) or []
+            result = []
+            for msg in items:
+                mid = getattr(msg, "message_id", "") or ""
+                if mid == exclude_message_id:
+                    continue
+                if len(result) >= count:
+                    break
+                msg_type = getattr(msg, "msg_type", "") or ""
+                body = getattr(msg, "body", None)
+                content = body.content if body and body.content else ""
+                sender = getattr(msg, "sender", None)
+                sender_id = ""
+                if sender:
+                    sender_id = getattr(sender, "id", "") or ""
+                text = ""
+                if msg_type == "text" and content:
+                    try:
+                        text = json.loads(content).get("text", content)
+                    except json.JSONDecodeError:
+                        text = content
+                elif msg_type == "post" and content:
+                    try:
+                        parsed = json.loads(content)
+                        parts = []
+                        title = parsed.get("title", "")
+                        if title:
+                            parts.append(title)
+                        for paragraph in parsed.get("content", []):
+                            for el in paragraph:
+                                if el.get("tag") == "text":
+                                    parts.append(el.get("text", ""))
+                        text = "\n".join(parts)
+                    except json.JSONDecodeError:
+                        text = content
+                elif content:
+                    text = f"[{msg_type}]"
+                
+                if text:
+                    sender_type = getattr(sender, "sender_type", "") if sender else ""
+                    label = "bot" if sender_type == "bot" else sender_id[:8]
+                    result.append({"sender": label, "msg_type": msg_type, "text": text})
+
+            result.reverse()  # Oldest first
+            return result
+        except Exception as e:
+            logger.error(f"Error listing chat messages: {e}")
+            return []
+
     # Regex to match markdown tables (header + separator + data rows)
     _TABLE_RE = re.compile(
         r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
@@ -471,6 +663,83 @@ class FeishuChannel(BaseChannel):
         except Exception as e:
             logger.error(f"Error sending text reply: {e}")
 
+    async def _send_post_reply(self, chat_id: str, title: str, content_lines: list) -> None:
+        """Send a rich-text (post) reply.
+        
+        content_lines: list of paragraphs, each paragraph is a list of tag dicts.
+        Example: [[{"tag": "text", "text": "hello "}, {"tag": "text", "text": "world", "style": ["bold"]}]]
+        """
+        if not self._client:
+            return
+        if chat_id.startswith("oc_"):
+            receive_id_type = "chat_id"
+        else:
+            receive_id_type = "open_id"
+        post_body = {"zh_cn": {"title": title, "content": content_lines}}
+        content = json.dumps(post_body, ensure_ascii=False)
+        request = CreateMessageRequest.builder() \
+            .receive_id_type(receive_id_type) \
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("post")
+                .content(content)
+                .build()
+            ).build()
+        try:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(None, self._client.im.v1.message.create, request)
+            if not response.success():
+                logger.error(f"Failed to send post reply: code={response.code}, msg={response.msg}")
+        except Exception as e:
+            logger.error(f"Error sending post reply: {e}")
+
+    @staticmethod
+    def _build_help_post() -> list:
+        """Build Feishu post (rich text) content from shared HELP_CONTENT yaml."""
+        h = HELP_CONTENT
+        t = lambda text: {"tag": "text", "text": text}
+        b = lambda text: {"tag": "text", "text": text, "style": ["bold"]}
+        it = lambda text: {"tag": "text", "text": text, "style": ["italic"]}
+        ln = lambda: [t("\n")]
+
+        lines: list = [ln()]
+
+        # Capabilities
+        lines.append([b(f"{h['capabilities']['title']}\n")])
+        for item in h["capabilities"]["items"]:
+            lines.append([t(f"    ▸ {item}\n")])
+        lines.append(ln())
+
+        # Usage
+        lines.append([b(f"{h['usage']['title']}\n")])
+        for item in h["usage"]["items"]:
+            lines.append([t(f"    ▸ {item}\n")])
+        lines.append(ln())
+
+        # Message types
+        lines.append([b(f"{h['message_types']['title']}\n")])
+        lines.append([t(f"    {h['message_types']['text']}\n")])
+        lines.append(ln())
+
+        # Commands
+        lines.append([b(f"{h['commands']['title']}\n")])
+        for cmd in h["commands"]["items"]:
+            lines.append([b(f"    {cmd['name']}\n")])
+            lines.append([t(f"    {cmd['description']}\n")])
+            if "example" in cmd:
+                lines.append([it(f"    例: {cmd['example']}\n")])
+            lines.append(ln())
+
+        # Notices
+        # Separator: match the longest notice line
+        max_len = max((len(n) for n in h.get("notices", [])), default=20)
+        lines.append([t("─" * (max_len + 3) + "\n")])
+        for notice in h["notices"]:
+            lines.append([it(f"⚠️ {notice}\n")])
+
+        return lines
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu."""
         if not self._client:
@@ -550,6 +819,163 @@ class FeishuChannel(BaseChannel):
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._on_message(data), self._loop)
     
+    async def _parse_msg_content(
+        self,
+        msg_type: str,
+        raw: dict,
+        message_id: str,
+        content_parts: list[str],
+        media_paths: list[str],
+        chat_type: str = "",
+    ) -> None:
+        """Parse a single Feishu message by type, appending to content_parts/media_paths."""
+        if msg_type == "text":
+            text = raw.get("text", "")
+            if chat_type == "group":
+                text = re.sub(r"@_user_\d+\s*", "", text).strip()
+            if text:
+                content_parts.append(text)
+
+        elif msg_type == "image":
+            image_key = raw.get("image_key", "")
+            if image_key:
+                loop = asyncio.get_running_loop()
+                path = await loop.run_in_executor(
+                    None, self._download_resource_sync,
+                    message_id, image_key, "image", "",
+                )
+                if path:
+                    content_parts.append(f"[image: {path}]")
+                    if self._image_parser:
+                        analysis = await self._image_parser.parse(path, raw.get("text", ""))
+                        if analysis:
+                            content_parts.append(f"[image_analysis: {analysis}]")
+                        else:
+                            media_paths.append(path)
+                    else:
+                        media_paths.append(path)
+                else:
+                    content_parts.append("[image: download failed]")
+            else:
+                content_parts.append("[image]")
+
+        elif msg_type == "file":
+            file_key = raw.get("file_key", "")
+            file_name = raw.get("file_name", "")
+            if file_key:
+                loop = asyncio.get_running_loop()
+                path = await loop.run_in_executor(
+                    None, self._download_resource_sync,
+                    message_id, file_key, "file", file_name,
+                )
+                if path:
+                    media_paths.append(path)
+                    content_parts.append(f"[file: {path}]")
+                else:
+                    content_parts.append(f"[file: download failed ({file_name})]")
+            else:
+                content_parts.append("[file]")
+
+        elif msg_type == "audio":
+            file_key = raw.get("file_key", "")
+            if file_key:
+                loop = asyncio.get_running_loop()
+                path = await loop.run_in_executor(
+                    None, self._download_resource_sync,
+                    message_id, file_key, "audio", "",
+                )
+                if path:
+                    content_parts.append(f"[audio: {path}]")
+                    if self._transcriber:
+                        transcription = await self._transcriber.transcribe(path)
+                        if transcription:
+                            content_parts.append(f"[transcription: {transcription}]")
+                        else:
+                            media_paths.append(path)
+                    else:
+                        media_paths.append(path)
+                else:
+                    content_parts.append("[audio: download failed]")
+            else:
+                content_parts.append("[audio]")
+
+        elif msg_type == "post":
+            title = raw.get("title", "")
+            if title:
+                content_parts.append(title)
+            paragraphs = raw.get("content", [])
+            for paragraph in paragraphs:
+                line_parts: list[str] = []
+                for element in paragraph:
+                    tag = element.get("tag", "")
+                    if tag == "text":
+                        line_parts.append(element.get("text", ""))
+                    elif tag == "a":
+                        href = element.get("href", "")
+                        link_text = element.get("text", href)
+                        line_parts.append(f"{link_text}({href})" if href else link_text)
+                    elif tag == "at":
+                        pass  # skip @mentions in post content
+                    elif tag == "img":
+                        image_key = element.get("image_key", "")
+                        if image_key:
+                            loop = asyncio.get_running_loop()
+                            path = await loop.run_in_executor(
+                                None, self._download_resource_sync,
+                                message_id, image_key, "image", "",
+                            )
+                            if path:
+                                content_parts.append(f"[image: {path}]")
+                                if self._image_parser:
+                                    analysis = await self._image_parser.parse(path, title or "")
+                                    if analysis:
+                                        content_parts.append(f"[image_analysis: {analysis}]")
+                                    else:
+                                        media_paths.append(path)
+                                else:
+                                    media_paths.append(path)
+                            else:
+                                content_parts.append("[image: download failed]")
+                    elif tag == "media":
+                        file_key = element.get("file_key", "")
+                        if file_key:
+                            loop = asyncio.get_running_loop()
+                            path = await loop.run_in_executor(
+                                None, self._download_resource_sync,
+                                message_id, file_key, "media", element.get("file_name", ""),
+                            )
+                            if path:
+                                media_paths.append(path)
+                                content_parts.append(f"[video: {path}]")
+                    elif tag == "emotion":
+                        line_parts.append(f"[{element.get('emoji_type', 'emoji')}]")
+                if line_parts:
+                    line_text = "".join(line_parts)
+                    if chat_type == "group":
+                        line_text = re.sub(r"@_user_\d+\s*", "", line_text).strip()
+                    if line_text:
+                        content_parts.append(line_text)
+
+        elif msg_type == "media":
+            file_key = raw.get("file_key", "")
+            file_name = raw.get("file_name", "")
+            if file_key:
+                loop = asyncio.get_running_loop()
+                path = await loop.run_in_executor(
+                    None, self._download_resource_sync,
+                    message_id, file_key, "media", file_name,
+                )
+                if path:
+                    media_paths.append(path)
+                    content_parts.append(f"[video: {path}]")
+                else:
+                    content_parts.append(f"[video: download failed]")
+            else:
+                content_parts.append("[video]")
+
+        else:
+            content_parts.append(MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]"))
+
     async def _on_message(self, data: "P2ImMessageReceiveV1") -> None:
         """Handle incoming message from Feishu (text, images, files, audio, video)."""
         try:
@@ -597,168 +1023,51 @@ class FeishuChannel(BaseChannel):
                 pass
 
             if msg_type == "text":
+                # Text needs special handling for slash commands
                 text = raw.get("text", message.content or "")
-                # Strip @mention placeholders (e.g. @_user_1) in group messages
                 if chat_type == "group":
                     text = re.sub(r"@_user_\d+\s*", "", text).strip()
-                # Handle slash commands
                 if text.strip().startswith("/"):
                     reply_to = chat_id if chat_type == "group" else sender_id
-                    handled = await self._handle_command(text.strip(), sender_id, reply_to)
+                    handled = await self._handle_command(
+                        text.strip(), sender_id, reply_to,
+                        chat_id=chat_id, chat_type=chat_type, message_id=message_id,
+                    )
                     if handled:
                         return
                 if text:
                     content_parts.append(text)
 
-            elif msg_type == "image":
-                image_key = raw.get("image_key", "")
-                if image_key:
-                    loop = asyncio.get_running_loop()
-                    path = await loop.run_in_executor(
-                        None, self._download_resource_sync,
-                        message_id, image_key, "image", "",
-                    )
-                    if path:
-                        content_parts.append(f"[image: {path}]")
-                        if self._image_parser:
-                            analysis = await self._image_parser.parse(path, raw.get("text", ""))
-                            if analysis:
-                                content_parts.append(f"[image_analysis: {analysis}]")
-                            else:
-                                # Analysis failed, pass raw image to main LLM
-                                media_paths.append(path)
-                        else:
-                            # No image parser, pass raw image to main LLM
-                            media_paths.append(path)
-                    else:
-                        content_parts.append("[image: download failed]")
-                else:
-                    content_parts.append("[image]")
-
-            elif msg_type == "file":
-                file_key = raw.get("file_key", "")
-                file_name = raw.get("file_name", "")
-                if file_key:
-                    loop = asyncio.get_running_loop()
-                    path = await loop.run_in_executor(
-                        None, self._download_resource_sync,
-                        message_id, file_key, "file", file_name,
-                    )
-                    if path:
-                        media_paths.append(path)
-                        content_parts.append(f"[file: {path}]")
-                    else:
-                        content_parts.append(f"[file: download failed ({file_name})]")
-                else:
-                    content_parts.append("[file]")
-
-            elif msg_type == "audio":
-                file_key = raw.get("file_key", "")
-                if file_key:
-                    loop = asyncio.get_running_loop()
-                    path = await loop.run_in_executor(
-                        None, self._download_resource_sync,
-                        message_id, file_key, "audio", "",
-                    )
-                    if path:
-                        content_parts.append(f"[audio: {path}]")
-                        if self._transcriber:
-                            transcription = await self._transcriber.transcribe(path)
-                            if transcription:
-                                content_parts.append(f"[transcription: {transcription}]")
-                            else:
-                                media_paths.append(path)
-                        else:
-                            media_paths.append(path)
-                    else:
-                        content_parts.append("[audio: download failed]")
-                else:
-                    content_parts.append("[audio]")
-
-            elif msg_type == "post":
-                # Rich text (post) message: contains paragraphs with text, images, links, etc.
-                # Feishu SDK already unwraps to locale level: {"title": "...", "content": [[...]]}
-                title = raw.get("title", "")
-                if title:
-                    content_parts.append(title)
-                paragraphs = raw.get("content", [])
-                for paragraph in paragraphs:
-                    line_parts: list[str] = []
-                    for element in paragraph:
-                        tag = element.get("tag", "")
-                        if tag == "text":
-                            line_parts.append(element.get("text", ""))
-                        elif tag == "a":
-                            href = element.get("href", "")
-                            link_text = element.get("text", href)
-                            line_parts.append(f"{link_text}({href})" if href else link_text)
-                        elif tag == "at":
-                            pass  # skip @mentions in post content
-                        elif tag == "img":
-                            image_key = element.get("image_key", "")
-                            if image_key:
-                                loop = asyncio.get_running_loop()
-                                path = await loop.run_in_executor(
-                                    None, self._download_resource_sync,
-                                    message_id, image_key, "image", "",
-                                )
-                                if path:
-                                    content_parts.append(f"[image: {path}]")
-                                    if self._image_parser:
-                                        analysis = await self._image_parser.parse(path, title or "")
-                                        if analysis:
-                                            content_parts.append(f"[image_analysis: {analysis}]")
-                                        else:
-                                            media_paths.append(path)
-                                    else:
-                                        media_paths.append(path)
-                                else:
-                                    content_parts.append("[image: download failed]")
-                        elif tag == "media":
-                            file_key = element.get("file_key", "")
-                            if file_key:
-                                loop = asyncio.get_running_loop()
-                                path = await loop.run_in_executor(
-                                    None, self._download_resource_sync,
-                                    message_id, file_key, "media", element.get("file_name", ""),
-                                )
-                                if path:
-                                    media_paths.append(path)
-                                    content_parts.append(f"[video: {path}]")
-                        elif tag == "emotion":
-                            line_parts.append(f"[{element.get('emoji_type', 'emoji')}]")
-                    if line_parts:
-                        line_text = "".join(line_parts)
-                        if chat_type == "group":
-                            line_text = re.sub(r"@_user_\d+\s*", "", line_text).strip()
-                        if line_text:
-                            content_parts.append(line_text)
-
-            elif msg_type == "media":
-                # "media" is Feishu's type for video messages
-                file_key = raw.get("file_key", "")
-                file_name = raw.get("file_name", "")
-                if file_key:
-                    loop = asyncio.get_running_loop()
-                    path = await loop.run_in_executor(
-                        None, self._download_resource_sync,
-                        message_id, file_key, "media", file_name,
-                    )
-                    if path:
-                        media_paths.append(path)
-                        content_parts.append(f"[video: {path}]")
-                    else:
-                        content_parts.append(f"[video: download failed]")
-                else:
-                    content_parts.append("[video]")
+            elif msg_type == "merge_forward":
+                reply_to = chat_id if chat_type == "group" else sender_id
+                await self._send_text_reply(
+                    reply_to, "⚠️ 暂不支持合并转发消息，请直接发送文字或单条消息。"
+                )
+                return
 
             else:
-                content_parts.append(MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]"))
+                await self._parse_msg_content(
+                    msg_type, raw, message_id, content_parts, media_paths, chat_type,
+                )
 
             content = "\n".join(content_parts) if content_parts else "[empty message]"
             
             if not content.strip():
                 return
+
+            # Quote-reply context: if user replied to a message, fetch it as context
+            parent_id = getattr(message, "parent_id", None)
+            if parent_id:
+                loop = asyncio.get_running_loop()
+                quoted_type, quoted_text = await loop.run_in_executor(
+                    None, self._get_message_content_sync, parent_id,
+                )
+                if quoted_text:
+                    content = (
+                        f"[引用消息({quoted_type})]: {quoted_text}\n\n"
+                        f"[用户回复]: {content}"
+                    )
+                    logger.debug(f"Feishu quote-reply: parent={parent_id}, type={quoted_type}")
             
             logger.debug(f"Feishu message from {sender_id} ({msg_type}): {content[:80]}...")
             

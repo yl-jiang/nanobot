@@ -222,8 +222,6 @@ class AgentLoop:
                 model=self.model
             )
 
-            # logger.debug(f"LLM reasoning: {response.reasoning_content}") 
-
             # Handle tool calls
             if response.has_tool_calls:
                 # Add assistant message with tool calls
