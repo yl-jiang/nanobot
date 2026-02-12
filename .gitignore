@@ -3,9 +3,10 @@
 *.pyc
 dist/
 build/
+docs/
 *.egg-info/
-.DS_Store
 *.egg
+*.pyc
 *.pyo
 *.pyd
 *.pyw
@@ -13,10 +14,10 @@ build/
 *.pywz
 *.pyzz
 .venv/
-*.log
 __pycache__/
 poetry.lock
 .pytest_cache/
 tests/
 botpy.log
-docs/
+.DS_Store
+*.log
