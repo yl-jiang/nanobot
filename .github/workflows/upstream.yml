@@ -1,0 +1,43 @@
+name: Upstream Sync
+
+permissions:
+    contents: write
+    actions: write
+
+on:
+    schedule:
+        - cron: "0 * * * *"  # 每小时执行
+    workflow_dispatch:
+
+jobs:
+    sync_with_upstream:
+        name: Sync with Upstream
+        runs-on: ubuntu-latest
+        if: ${{ github.event.repository.fork }}
+
+        steps:
+            - name: Checkout target repo
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Sync Upstream
+              uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+              with:
+                  target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+                  upstream_sync_repo: HKUDS/nanobot
+                  upstream_sync_branch: main
+                  target_sync_branch: main
+                  test_mode: false
+
+            - name: Check sync result
+              if: failure()
+              run: |
+                  echo "::error::Upstream sync failed. Possible causes:"
+                  echo "1. Workflow file changed in upstream (GitHub disables scheduled runs)"
+                  echo "2. Merge conflicts between fork and upstream"
+                  echo "3. Permission issues with GITHUB_TOKEN"
+                  echo ""
+                  echo "Manual fix: Go to 'Actions' tab and run this workflow manually once to re-enable scheduling."
+                  exit 1
