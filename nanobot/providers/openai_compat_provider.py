@@ -297,6 +297,24 @@ class OpenAICompatProvider(LLMProvider):
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
 
+        # Provider-specific thinking parameters.
+        # Only sent when reasoning_effort is explicitly configured so that
+        # the provider default is preserved otherwise.
+        if spec and reasoning_effort is not None:
+            thinking_enabled = reasoning_effort.lower() != "minimal"
+            extra: dict[str, Any] | None = None
+            if spec.name == "dashscope":
+                extra = {"enable_thinking": thinking_enabled}
+            elif spec.name in (
+                "volcengine", "volcengine_coding_plan",
+                "byteplus", "byteplus_coding_plan",
+            ):
+                extra = {
+                    "thinking": {"type": "enabled" if thinking_enabled else "disabled"}
+                }
+            if extra:
+                kwargs.setdefault("extra_body", {}).update(extra)
+
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
